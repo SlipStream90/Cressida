@@ -64,7 +64,7 @@ agents:
 
 obsidian:
   # Set vault_path to your vault directory (or use CRESSIDA_OBSIDIAN_VAULT env var)
-  vault_path: ""                   # e.g. "C:/Users/you/Documents/MyVault"
+  vault_path: "C:/Users/adity/Desktop/THEIA"
   cressida_folder: "Cressida"      # subfolder inside the vault Cressida owns
   inbox_folder: "Inbox"            # drop .md briefs here to trigger missions
   poll_interval_seconds: 15        # how often to check the inbox folder
