@@ -47,6 +47,8 @@ def build_parser() -> argparse.ArgumentParser:
     daemon_parser.add_argument("--provider", type=str, default="auto", help=_PROVIDER_HELP)
     daemon_parser.add_argument("--ollama-model", type=str, default="llama3.2", help="Ollama model name (used when provider=ollama)")
     daemon_parser.add_argument("--ollama-host", type=str, default="http://localhost:11434", help="Ollama server URL")
+    daemon_parser.add_argument("--obsidian-vault", type=str, default="", help="Path to your Obsidian vault (enables bidirectional sync)")
+    daemon_parser.add_argument("--obsidian-folder", type=str, default="Cressida", help="Subfolder inside the vault for Cressida notes")
 
     resolve_parser = subparsers.add_parser("resolve-escalation", help="Resolve a BOND escalation to unblock a mission")
     resolve_parser.add_argument("mission_id", type=str, help="Mission ID")

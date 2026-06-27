@@ -62,6 +62,13 @@ agents:
       default:      "llama3.2"   # change to any tool-capable model you have pulled
       host:         "http://localhost:11434"
 
+obsidian:
+  # Set vault_path to your vault directory (or use CRESSIDA_OBSIDIAN_VAULT env var)
+  vault_path: ""                   # e.g. "C:/Users/you/Documents/MyVault"
+  cressida_folder: "Cressida"      # subfolder inside the vault Cressida owns
+  inbox_folder: "Inbox"            # drop .md briefs here to trigger missions
+  poll_interval_seconds: 15        # how often to check the inbox folder
+
 autonomy:
   # Layer 4 — Self-Triggering
   watcher:

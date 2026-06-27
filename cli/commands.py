@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -231,6 +232,37 @@ async def start_daemon(args: argparse.Namespace) -> int:
     # Post-mortem analyzer wires itself to the event bus on construction
     PostMortemAnalyzer(event_bus=event_bus, registry=registry, memory=stall_mem)
 
+    # Obsidian bridge (optional — only if vault is configured)
+    obsidian_tasks = []
+    obsidian_vault = getattr(args, "obsidian_vault", "") or os.environ.get("CRESSIDA_OBSIDIAN_VAULT", "")
+    if obsidian_vault:
+        try:
+            from cressida.obsidian.bridge import init_bridge
+            bridge = init_bridge(
+                vault_path=obsidian_vault,
+                cressida_folder=getattr(args, "obsidian_folder", "Cressida"),
+                poll_interval=getattr(args, "obsidian_poll", 15.0),
+            )
+            missions_base = Path(getattr(args, "root", ".")) / "cressida" / "missions"
+            knowledge_base = Path(getattr(args, "root", ".")) / "cressida" / "knowledge"
+            bridge.subscribe_to_events(event_bus, missions_base, knowledge_base)
+
+            async def _handle_vault_brief(brief: str, meta: dict) -> None:
+                import argparse as _ap
+                _args = _ap.Namespace(
+                    brief=brief,
+                    provider=meta.get("provider", getattr(args, "provider", "auto")),
+                    ollama_model=getattr(args, "ollama_model", "llama3.2"),
+                    ollama_host=getattr(args, "ollama_host", "http://localhost:11434"),
+                    priority=meta.get("priority", "medium"),
+                )
+                await run_mission(_args)
+
+            obsidian_tasks.append(bridge.watch_inbox(_handle_vault_brief))
+            print(f"  Obsidian:  {obsidian_vault}")
+        except Exception as exc:
+            print(f"  Obsidian:  not connected ({exc})")
+
     print("CRESSIDA daemon started.")
     print(f"  Inbox:     {getattr(args, 'inbox', 'missions/inbox')}")
     print(f"  Scheduled: {getattr(args, 'scheduled', 'missions/scheduled')}")
@@ -242,6 +274,7 @@ async def start_daemon(args: argparse.Namespace) -> int:
             watcher.run(),
             monitor.run(),
             status.run(),
+            *obsidian_tasks,
         )
     except KeyboardInterrupt:
         print("\nDaemon stopped.")

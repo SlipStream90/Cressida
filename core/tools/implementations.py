@@ -113,6 +113,9 @@ def _run_shell(command: str, cwd: str | None = None, timeout: int = 60, mission_
 
 
 def _query_memory(keywords: list[str], task_type: str = "", top_k: int = 5, mission_id: str = "") -> str:
+    parts: list[str] = []
+
+    # 1. Internal strategic memory
     try:
         from cressida.memory.retrieval import MemoryRetrieval
         retrieval = MemoryRetrieval()
@@ -122,12 +125,28 @@ def _query_memory(keywords: list[str], task_type: str = "", top_k: int = 5, miss
             top_k=top_k,
             include_mission_id=mission_id,
         )
-        if not results:
-            return "No relevant memory found."
-        parts = [f"[{r.get('source', '?')}]\n{r.get('content', '')[:600]}" for r in results]
-        return "\n\n---\n\n".join(parts)
-    except Exception as exc:
-        return f"Memory query error: {exc}"
+        for r in results:
+            parts.append(f"[memory:{r.get('source', '?')}]\n{r.get('content', '')[:600]}")
+    except Exception:
+        pass
+
+    # 2. Obsidian vault (if configured)
+    try:
+        from cressida.obsidian.bridge import get_bridge
+        bridge = get_bridge()
+        if bridge:
+            query = " ".join(keywords)
+            vault_results = bridge.search(query, max_results=top_k)
+            for r in vault_results:
+                parts.append(
+                    f"[vault:{r['path']}]\n**{r['title']}**\n{r['excerpt']}"
+                )
+    except Exception:
+        pass
+
+    if not parts:
+        return "No relevant memory or vault notes found."
+    return "\n\n---\n\n".join(parts)
 
 
 def _approve_phase(
