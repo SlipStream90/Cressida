@@ -1,0 +1,15 @@
+{
+  "template": "research_task",
+  "description": "Standard research task template",
+  "structure": {
+    "name": "Research: {topic}",
+    "agent": "GREENWAY",
+    "output_format": "markdown_report",
+    "sections": [
+      "Overview",
+      "Technology Comparison",
+      "Risk Assessment",
+      "Recommendations"
+    ]
+  }
+}

@@ -1,0 +1,136 @@
+from __future__ import annotations
+
+import asyncio
+from datetime import datetime
+from typing import Any
+
+from cressida.core.events import Event, EventBus, EventType
+from cressida.core.registry import AgentRegistry
+from cressida.core.types import AgentRole, MissionState, MissionStatus, Task, TaskStatus
+from cressida.memory.system import MemorySystem
+from cressida.state.shared_state import SharedState
+
+from .dependency_graph import CyclicDependencyError, DependencyGraph
+from .executor import TaskExecutor
+from .router import TaskRouter
+from .scheduler import Scheduler
+
+
+class CoordinationError(Exception):
+    pass
+
+
+class Coordinator:
+    def __init__(
+        self,
+        registry: AgentRegistry,
+        event_bus: EventBus,
+        memory: MemorySystem,
+    ) -> None:
+        self._registry = registry
+        self._event_bus = event_bus
+        self._memory = memory
+        self._router = TaskRouter()
+        self._executor = TaskExecutor(registry, self._router, event_bus)
+        self._graph = DependencyGraph()
+        self._scheduler = Scheduler(self._graph)
+
+    async def run_mission(self, state: MissionState, shared: SharedState | None = None) -> MissionState:
+        state.status = MissionStatus.IN_PROGRESS
+        await self._event_bus.publish(
+            Event(type=EventType.MISSION_STARTED, data={"mission_id": state.mission_id, "brief": state.brief}, source="coordinator")
+        )
+
+        try:
+            self._build_graph(state)
+            schedule = self._scheduler.compute_schedule()
+            self._memory.strategic.record_decision(
+                decision_id=f"schedule_{state.mission_id}",
+                title="Execution schedule",
+                description=f"Schedule with {len(schedule.order)} tasks across {len(schedule.parallel_batches)} batches",
+                alternatives=[],
+                chosen="topological_sort",
+                rationale="Optimal parallelization with dependency resolution",
+                author="coordinator",
+                tags=["scheduling", state.mission_id],
+            )
+
+            for batch_idx, batch in enumerate(schedule.parallel_batches):
+                batch_tasks = [state.tasks[tid] for tid in batch if tid in state.tasks]
+                await self._execute_batch(batch_tasks, state, batch_idx, schedule)
+
+            self._finalize_mission(state)
+
+        except CyclicDependencyError as e:
+            state.status = MissionStatus.FAILED
+            await self._event_bus.publish(
+                Event(type=EventType.MISSION_FAILED, data={"mission_id": state.mission_id, "error": str(e)}, source="coordinator")
+            )
+
+        except Exception as e:
+            state.status = MissionStatus.FAILED
+            await self._event_bus.publish(
+                Event(type=EventType.MISSION_FAILED, data={"mission_id": state.mission_id, "error": str(e)}, source="coordinator")
+            )
+
+        return state
+
+    def _build_graph(self, state: MissionState) -> None:
+        for task_id, task in state.tasks.items():
+            self._graph.add_node(task_id, weight=task.priority.value if hasattr(task.priority, "value") else 50)
+        for task_id, task in state.tasks.items():
+            for dep_id in task.depends_on:
+                self._graph.add_dependency(task_id, dep_id)
+
+    async def _execute_batch(
+        self,
+        tasks: list[Task],
+        state: MissionState,
+        batch_idx: int,
+        schedule: Any,
+    ) -> None:
+        pending: list[Task] = [t for t in tasks if t.status == TaskStatus.PENDING]
+        if not pending:
+            return
+
+        if len(pending) == 1:
+            await self._executor.execute_task(pending[0], state)
+        else:
+            await self._executor.execute_parallel(pending, state)
+
+        for task in pending:
+            if task.status == TaskStatus.COMPLETED:
+                state.complete_task(task.id)
+                await self._event_bus.publish(
+                    Event(type=EventType.EVALUATION_RECORDED, data={
+                        "task_id": task.id,
+                        "agent": str(task.agent) if task.agent else "unknown",
+                        "execution_time": task.execution_time,
+                    }, source="coordinator")
+                )
+            elif task.status == TaskStatus.FAILED:
+                state.fail_task(task.id, task.error or "unknown error")
+
+    def _finalize_mission(self, state: MissionState) -> None:
+        all_completed = all(
+            t.status == TaskStatus.COMPLETED for t in state.tasks.values()
+        )
+        any_failed = any(
+            t.status == TaskStatus.FAILED for t in state.tasks.values()
+        )
+
+        if all_completed:
+            state.status = MissionStatus.COMPLETED
+            self._event_bus.publish(
+                Event(type=EventType.MISSION_COMPLETED, data={"mission_id": state.mission_id}, source="coordinator")
+            )
+        elif any_failed:
+            state.status = MissionStatus.FAILED
+            self._event_bus.publish(
+                Event(type=EventType.MISSION_FAILED, data={"mission_id": state.mission_id, "error": "One or more tasks failed"}, source="coordinator")
+            )
+        else:
+            state.status = MissionStatus.COMPLETED
+            self._event_bus.publish(
+                Event(type=EventType.MISSION_COMPLETED, data={"mission_id": state.mission_id}, source="coordinator")
+            )

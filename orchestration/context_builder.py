@@ -1,0 +1,73 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from cressida.core.types import AgentRole, AgentMessage
+
+
+class ContextBuilder:
+    def __init__(self, cressida_root: str | Path = "cressida") -> None:
+        self._root = Path(cressida_root)
+
+    def build_prompt(
+        self,
+        task_id: str,
+        agent_role: AgentRole,
+        mission_id: str,
+        brief: str,
+        reads: list[str],
+        task_description: str,
+        objectives: list[str] | None = None,
+    ) -> str:
+        sections: list[str] = []
+        sections.append(f"# MISSION: {mission_id}")
+        sections.append(f"## Brief\n{brief}")
+        if objectives:
+            sections.append("## Objectives\n" + "\n".join(f"- {o}" for o in objectives))
+        sections.append(f"## Task: {task_id}\n{task_description}")
+        sections.append(f"## Agent: {agent_role.value}")
+
+        spec = self._read_agent_spec(agent_role)
+        if spec:
+            sections.append(f"## Agent Specification\n{spec}")
+
+        for path in reads:
+            content = self._resolve_read(path, mission_id)
+            if content:
+                sections.append(f"## Context: {path}\n{content}")
+            else:
+                sections.append(f"## Context: {path}\n*Not found*")
+
+        sections.append("## Output Requirements\nProduce the outputs specified in your agent spec. Write all artifacts to the mission directory.")
+
+        return "\n\n---\n\n".join(sections)
+
+    def _read_agent_spec(self, role: AgentRole) -> str | None:
+        path = self._root / "agents" / f"{role.value.lower()}.md"
+        if path.exists():
+            return path.read_text(encoding="utf-8")
+        return None
+
+    def _resolve_read(self, read_path: str, mission_id: str) -> str | None:
+        resolved = read_path.replace("<mission_id>", mission_id)
+        candidates = [
+            self._root / resolved,
+            self._root / "missions" / mission_id / resolved,
+            self._root / "knowledge" / resolved,
+            Path(resolved),
+        ]
+        for c in candidates:
+            if c.exists():
+                if c.is_dir():
+                    return self._read_dir(c)
+                return c.read_text(encoding="utf-8")
+        return None
+
+    def _read_dir(self, path: Path) -> str:
+        lines: list[str] = []
+        for f in sorted(path.iterdir()):
+            if f.is_file() and f.suffix in (".md", ".py", ".json", ".yaml", ".txt"):
+                lines.append(f"--- {f.name} ---")
+                lines.append(f.read_text(encoding="utf-8"))
+        return "\n".join(lines)

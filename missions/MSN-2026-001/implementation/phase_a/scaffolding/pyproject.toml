@@ -1,0 +1,37 @@
+[project]
+name = "echo"
+version = "0.2.0"
+description = "Expressive Customized Hyper-narrative Orchestrator — personalized audio narration platform"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.29.0",
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.2.0",
+    "httpx>=0.27.0",
+    "python-dotenv>=1.0.0",
+    "google-generativeai>=0.8.0",
+    "elevenlabs>=1.0.0",
+    "langgraph>=0.1.0",
+    "langchain>=0.3.0",
+    "faiss-cpu>=1.8.0",
+    "numpy>=1.26.0",
+    "supabase>=2.5.0",
+    "redis>=5.0.0",
+    "pyyaml>=6.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "httpx>=0.27.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"

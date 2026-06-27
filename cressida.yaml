@@ -1,0 +1,88 @@
+# CRESSIDA Configuration
+version: "0.1.0"
+
+system:
+  name: "CRESSIDA"
+  description: "Autonomous Multi-Agent Software Engineering Intelligence Framework"
+  max_concurrent_tasks: 4
+  task_timeout_seconds: 3600
+  max_retries: 3
+  retry_delay_seconds: 5
+
+memory:
+  base_path: "memory"
+  strategic:
+    architecture_file: "architecture.json"
+    decisions_file: "decisions.json"
+    patterns_file: "learned_patterns.json"
+
+evaluation:
+  base_path: "evaluations"
+  default_weights:
+    architecture_compliance: 0.3
+    code_quality: 0.2
+    test_coverage: 0.2
+    performance: 0.15
+    security: 0.15
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+
+agents:
+  auto_register: true
+  agent_path: "agents/"
+  # Provider selection — first available wins when set to "auto"
+  # Options: auto | anthropic | openai | gemini | groq | ollama
+  # Override with env var: CRESSIDA_PROVIDER=gemini
+  provider: "auto"
+
+  model_overrides:
+    anthropic:
+      BOND:         "claude-opus-4-8"
+      INTELLIGENCE: "claude-opus-4-8"
+      Q:            "claude-opus-4-8"
+      default:      "claude-sonnet-4-6"
+    openai:
+      BOND:         "gpt-4o"
+      INTELLIGENCE: "gpt-4o"
+      Q:            "gpt-4o"
+      default:      "gpt-4o-mini"
+    gemini:
+      BOND:         "gemini-1.5-pro"
+      INTELLIGENCE: "gemini-1.5-pro"
+      Q:            "gemini-1.5-pro"
+      default:      "gemini-1.5-flash"
+    groq:
+      BOND:         "llama-3.3-70b-versatile"
+      INTELLIGENCE: "llama-3.3-70b-versatile"
+      Q:            "llama-3.3-70b-versatile"
+      default:      "llama-3.1-8b-instant"
+    ollama:
+      default:      "llama3.2"   # change to any tool-capable model you have pulled
+      host:         "http://localhost:11434"
+
+autonomy:
+  # Layer 4 — Self-Triggering
+  watcher:
+    inbox_dir: "missions/inbox"
+    scheduled_dir: "missions/scheduled"
+    poll_interval_seconds: 10
+
+  # Layer 5 — Self-Monitoring
+  monitor:
+    stall_threshold_seconds: 1800
+    check_interval_seconds: 60
+    status_port: 7437
+    status_file: "missions/status.json"
+
+  # Layer 5 — Post-Mortem
+  postmortem:
+    lessons_file: "knowledge/lessons.md"
+    postmortems_dir: "memory/postmortems"
+    run_remediation_analysis: true
+
+  # Layer 3 — BOND autonomous gates
+  bond:
+    confidence_threshold: 0.7
+    escalation_dir: "missions/{mission_id}/escalations"

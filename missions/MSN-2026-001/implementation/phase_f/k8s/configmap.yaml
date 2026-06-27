@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: echo-config
+data:
+  APP_NAME: "ECHO"
+  APP_VERSION: "0.2.0"
+  DEBUG: "false"
+  GEMINI_MODEL: "gemini-1.5-pro"
+  ELEVENLABS_DEFAULT_VOICE: "Rachel"
+  FAISS_INDEX_DIR: "/data/faiss_index"
+  AUDIO_CACHE_DIR: "/data/audio_cache"

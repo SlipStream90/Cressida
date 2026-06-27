@@ -1,0 +1,518 @@
+{
+  "summary": {
+    "mission_id": "MSN-2026-001",
+    "total_tasks": 39,
+    "voided_tasks": 9,
+    "active_tasks": 30,
+    "completed_tasks": 26,
+    "remaining_tasks": 4
+  },
+  "tasks": [
+    {
+      "task_id": "T-A-001",
+      "name": "Project scaffolding + configuration",
+      "agent": "BOOTHROYD",
+      "phase": "A",
+      "reads": ["agents/boothroyd.md", "missions/MSN-2026-001/ARCHITECTURE.md", "cressida.yaml"],
+      "writes": ["missions/MSN-2026-001/implementation/phase_a/scaffolding/"],
+      "dependencies": [],
+      "complexity": "S",
+      "output_artifact": "project structure, pyproject.toml, deps",
+      "description": "Initialize Python project structure, pyproject.toml, dependency management, pre-commit hooks, linting config"
+    },
+    {
+      "task_id": "T-A-002",
+      "name": "Pydantic data models",
+      "agent": "BRANCH",
+      "phase": "A",
+      "reads": ["agents/branch.md", "missions/MSN-2026-001/ARCHITECTURE.md", "missions/MSN-2026-001/intelligence/PRD.md"],
+      "writes": ["missions/MSN-2026-001/implementation/phase_a/models/"],
+      "dependencies": ["T-A-001"],
+      "complexity": "M",
+      "output_artifact": "models.py — UserProfile, FeedbackEvent, StorySegment, NarrationVariant, EvaluationRecord, StylePreset, RewardModelInput, RewardModelOutput",
+      "description": "Implement all Pydantic models from Architecture with updated OpSpyglass stack: StylePreset replaces PersonaLoRA"
+    },
+    {
+      "task_id": "T-A-003",
+      "name": "Supabase schema + migrations",
+      "agent": "BOOTHROYD",
+      "phase": "A",
+      "reads": ["agents/boothroyd.md", "missions/MSN-2026-001/ARCHITECTURE.md"],
+      "writes": ["missions/MSN-2026-001/implementation/phase_a/database/"],
+      "dependencies": ["T-A-002"],
+      "complexity": "M",
+      "output_artifact": "SQL migrations for Supabase PostgreSQL",
+      "description": "Write Supabase PostgreSQL DDL for user_profiles, story_segments, feedback_events, narration_variants tables per Architecture §8.1"
+    },
+    {
+      "task_id": "T-A-004",
+      "name": "Redis Cloud setup + key schema",
+      "agent": "BOOTHROYD",
+      "phase": "A",
+      "reads": ["agents/boothroyd.md", "missions/MSN-2026-001/ARCHITECTURE.md"],
+      "writes": ["missions/MSN-2026-001/implementation/phase_a/cache/"],
+      "dependencies": ["T-A-001"],
+      "complexity": "S",
+      "output_artifact": "redis_client.py, key schema constants, REDIS_URL config, TTL config",
+      "description": "Implement Redis Cloud connection via REDIS_URL, key schema (session, profile, variant, audio, checkpoint) per Architecture §8.2"
+    },
+    {
+      "task_id": "T-A-005",
+      "name": "Qdrant vector DB setup",
+      "agent": "BOOTHROYD",
+      "phase": "A",
+      "reads": ["agents/boothroyd.md", "missions/MSN-2026-001/ARCHITECTURE.md"],
+      "writes": ["missions/MSN-2026-001/implementation/phase_a/vector_db/"],
+      "dependencies": ["T-A-001"],
+      "complexity": "S",
+      "output_artifact": "",
+      "description": "VOIDED — Managed vector DB out of scope. Replaced by FAISS local indexes per tech stack decisions.",
+      "void_reason": "Managed vector database out of scope. Using FAISS local per Decision 6."
+    },
+    {
+      "task_id": "T-A-006",
+      "name": "Base FastAPI framework + health endpoints",
+      "agent": "BRANCH",
+      "phase": "A",
+      "reads": ["agents/branch.md", "missions/MSN-2026-001/ARCHITECTURE.md"],
+      "writes": ["missions/MSN-2026-001/implementation/phase_a/api/"],
+      "dependencies": ["T-A-002"],
+      "complexity": "M",
+      "output_artifact": "main.py, middleware, /health endpoint, base router, error handlers",
+      "description": "Implement FastAPI app factory, CORS middleware, request logging, health check endpoint, base exception handlers"
+    },
+    {
+      "task_id": "T-A-007",
+      "name": "Dockerfile for API service",
+      "agent": "BOOTHROYD",
+      "phase": "A",
+      "reads": ["agents/boothroyd.md", "missions/MSN-2026-001/ARCHITECTURE.md"],
+      "writes": ["missions/MSN-2026-001/implementation/phase_a/docker/"],
+      "dependencies": ["T-A-001"],
+      "complexity": "M",
+      "output_artifact": "Dockerfile, .dockerignore",
+      "description": "Write Dockerfile for the API service only. No database containers (Supabase Cloud + Redis Cloud). No GPU dependencies."
+    },
+    {
+      "task_id": "T-A-008",
+      "name": "API Gateway config (nginx/envoy)",
+      "agent": "BOOTHROYD",
+      "phase": "A",
+      "reads": ["agents/boothroyd.md", "missions/MSN-2026-001/ARCHITECTURE.md"],
+      "writes": ["missions/MSN-2026-001/implementation/phase_a/gateway/"],
+      "dependencies": ["T-A-007"],
+      "complexity": "S",
+      "output_artifact": "nginx.conf with TLS termination, rate limiting, route mapping",
+      "description": "Configure API Gateway with route mapping, TLS termination, rate limiting per Architecture §7"
+    },
+    {
+      "task_id": "T-B-001",
+      "name": "LangGraph workflow definition",
+      "agent": "BRANCH",
+      "phase": "B",
+      "reads": ["agents/branch.md", "missions/MSN-2026-001/ARCHITECTURE.md"],
+      "writes": ["missions/MSN-2026-001/implementation/phase_b/langgraph/"],
+      "dependencies": ["T-A-002"],
+      "complexity": "M",
+      "output_artifact": "WorkflowState TypedDict, graph builder, 8 node definitions, edge definitions",
+      "description": "Implement WorkflowState schema, LangGraph graph with 8 nodes: load_context, retrieve_preference, generate_variants, select_best, synthesize_audio, collect_feedback, update_preference, complete. Checkpointing via Redis Cloud."
+    },
+    {
+      "task_id": "T-B-002",
+      "name": "Reward scoring function service",
+      "agent": "BRANCH",
+      "phase": "B",
+      "reads": ["agents/branch.md", "missions/MSN-2026-001/ARCHITECTURE.md"],
+      "writes": ["missions/MSN-2026-001/implementation/phase_b/reward_model/"],
+      "dependencies": ["T-A-006"],
+      "complexity": "M",
+      "output_artifact": "reward_service.py — weighted scoring function, SCORING_WEIGHTS constants, update_style_scores()",
+      "description": "Implement weighted scoring function per Architecture §5: deterministic style score updates from explicit (1-5) and implicit (replay, skip, pause, completion) signals. No neural model."
+    },
+    {
+      "task_id": "T-B-003",
+      "name": "LoRA adapter loading + vLLM S-LoRA integration",
+      "agent": "BRANCH",
+      "phase": "B",
+      "reads": [],
+      "writes": [],
+      "dependencies": [],
+      "complexity": "",
+      "output_artifact": "",
+      "description": "VOIDED — LoRA adapters and GPU inference out of scope. Style adaptation via Gemini prompt engineering per Decision 7.",
+      "void_reason": "LoRA/fine-tuning/GPU out of scope. Using prompt engineering per Decision 7."
+    },
+    {
+      "task_id": "T-B-004",
+      "name": "Variant generation via Gemini prompt engineering",
+      "agent": "BRANCH",
+      "phase": "B",
+      "reads": ["agents/branch.md", "missions/MSN-2026-001/ARCHITECTURE.md"],
+      "writes": ["missions/MSN-2026-001/implementation/phase_b/variant_gen/"],
+      "dependencies": ["T-B-001", "T-B-002"],
+      "complexity": "L",
+      "output_artifact": "variant_gen_service.py — Gemini API client, style preset selector, 3 parallel variant generation calls",
+      "description": "Implement POST /v1/variants/generate: loads segment, retrieves style scores, fans out 3 parallel Gemini API calls with style-specific system prompts, returns variants"
+    },
+    {
+      "task_id": "T-B-005",
+      "name": "ElevenLabs TTS integration with caching",
+      "agent": "BRANCH",
+      "phase": "B",
+      "reads": ["agents/branch.md", "missions/MSN-2026-001/ARCHITECTURE.md"],
+      "writes": ["missions/MSN-2026-001/implementation/phase_b/tts/"],
+      "dependencies": ["T-A-006"],
+      "complexity": "M",
+      "output_artifact": "elevenlabs_client.py, streaming TTS, audio cache (MD5 hash key), voice selector",
+      "description": "Implement ElevenLabs client with streaming API, audio caching layer (MD5 of text+voice_id), voice selection per user profile"
+    },
+    {
+      "task_id": "T-B-006",
+      "name": "Variant selection logic",
+      "agent": "BRANCH",
+      "phase": "B",
+      "reads": ["agents/branch.md", "missions/MSN-2026-001/ARCHITECTURE.md"],
+      "writes": ["missions/MSN-2026-001/implementation/phase_b/merger/"],
+      "dependencies": ["T-B-004"],
+      "complexity": "M",
+      "output_artifact": "variant_selector.py — selects best variant by highest style score, returns with confidence",
+      "description": "Implement variant selection: pick highest-scored style variant from reward_service scores, return selected_idx and confidence"
+    },
+    {
+      "task_id": "T-C-001",
+      "name": "Feedback service — explicit feedback endpoints",
+      "agent": "BRANCH",
+      "phase": "C",
+      "reads": ["agents/branch.md", "missions/MSN-2026-001/ARCHITECTURE.md", "missions/MSN-2026-001/intelligence/PRD.md"],
+      "writes": ["missions/MSN-2026-001/implementation/phase_c/feedback/"],
+      "dependencies": ["T-A-006"],
+      "complexity": "M",
+      "output_artifact": "POST /v1/feedback/explicit, POST /v1/feedback/implicit, feedback_events table writes",
+      "description": "Implement explicit (1-5) and implicit (replay, skip, pause, completion) feedback collection endpoints per Architecture §7"
+    },
+    {
+      "task_id": "T-C-002",
+      "name": "Implicit signal pipeline",
+      "agent": "BRANCH",
+      "phase": "C",
+      "reads": ["agents/branch.md", "missions/MSN-2026-001/ARCHITECTURE.md"],
+      "writes": ["missions/MSN-2026-001/implementation/phase_c/feedback/"],
+      "dependencies": ["T-B-004", "T-A-006"],
+      "complexity": "L",
+      "output_artifact": "implicit_signal_pipeline.py — signal disambiguation, confidence weighting, reward_service integration",
+      "description": "Build pipeline converting implicit signals to preference updates: skip→negative, replay→positive, completion%→weight, integrated with reward_service.update_style_scores()"
+    },
+    {
+      "task_id": "T-C-003",
+      "name": "Reward model training pipeline — Bradley-Terry loss",
+      "agent": "BRANCH",
+      "phase": "C",
+      "reads": [],
+      "writes": [],
+      "dependencies": [],
+      "complexity": "",
+      "output_artifact": "",
+      "description": "VOIDED — Neural reward model training out of scope. Weighted scoring function in reward_service.py replaces this per Decision 8.",
+      "void_reason": "Neural reward model training out of scope. Using weighted scoring function per Decision 8."
+    },
+    {
+      "task_id": "T-C-004",
+      "name": "Training trigger logic — scheduled + threshold",
+      "agent": "BRANCH",
+      "phase": "C",
+      "reads": [],
+      "writes": [],
+      "dependencies": [],
+      "complexity": "",
+      "output_artifact": "",
+      "description": "VOIDED — Dependent on voided T-C-003. No neural training pipeline exists, so no trigger needed.",
+      "void_reason": "Dependent on voided T-C-003. No training pipeline to trigger."
+    },
+    {
+      "task_id": "T-C-005",
+      "name": "MLflow experiment tracking setup",
+      "agent": "BOOTHROYD",
+      "phase": "C",
+      "reads": [],
+      "writes": [],
+      "dependencies": [],
+      "complexity": "",
+      "output_artifact": "",
+      "description": "VOIDED — ML training pipeline infrastructure out of scope. No experiments to track without training.",
+      "void_reason": "ML training infrastructure out of scope."
+    },
+    {
+      "task_id": "T-D-001",
+      "name": "Adapter blending implementation — linear interpolation",
+      "agent": "BRANCH",
+      "phase": "D",
+      "reads": [],
+      "writes": [],
+      "dependencies": [],
+      "complexity": "",
+      "output_artifact": "",
+      "description": "VOIDED — LoRA adapter blending out of scope. Style adaptation is prompt-based, not weight-based per Decision 7.",
+      "void_reason": "LoRA out of scope. Prompt engineering replaces adapter blending."
+    },
+    {
+      "task_id": "T-D-002",
+      "name": "In-session preference score updates",
+      "agent": "BRANCH",
+      "phase": "D",
+      "reads": ["agents/branch.md", "missions/MSN-2026-001/ARCHITECTURE.md", "missions/MSN-2026-001/intelligence/PRD.md"],
+      "writes": ["missions/MSN-2026-001/implementation/phase_d/adaptation/"],
+      "dependencies": ["T-B-002", "T-C-002"],
+      "complexity": "M",
+      "output_artifact": "session_adapter.py — reward_service calls within session, 3-segment window for score refresh",
+      "description": "Implement in-session preference adaptation: reward_service.update_style_scores() called after each feedback event within an active session, refreshing style preferences for subsequent segments"
+    },
+    {
+      "task_id": "T-D-003",
+      "name": "A/B testing framework — treatment/control split",
+      "agent": "BRANCH",
+      "phase": "D",
+      "reads": ["agents/branch.md", "missions/MSN-2026-001/ARCHITECTURE.md", "missions/MSN-2026-001/intelligence/PRD.md"],
+      "writes": ["missions/MSN-2026-001/implementation/phase_d/abtesting/"],
+      "dependencies": ["T-D-002"],
+      "complexity": "L",
+      "output_artifact": "ab_test_manager.py — split configuration, variant tagging, engagement lift tracking",
+      "description": "Build A/B testing framework: treatment/control split, preferred-style vs random-style assignment, engagement lift tracking per segment"
+    },
+    {
+      "task_id": "T-D-004",
+      "name": "Performance optimization — latency and throughput",
+      "agent": "BRANCH",
+      "phase": "D",
+      "reads": ["agents/branch.md", "missions/MSN-2026-001/ARCHITECTURE.md"],
+      "writes": ["missions/MSN-2026-001/implementation/phase_d/optimization/"],
+      "dependencies": ["T-D-003", "T-B-004"],
+      "complexity": "M",
+      "output_artifact": "latency profiling report, optimized pipeline, caching tuning",
+      "description": "Profile and optimize: Gemini API latency <2s p95 (with parallel fan-out), ElevenLabs streaming <1s perceived, cache hit ratio optimization"
+    },
+    {
+      "task_id": "T-E-001",
+      "name": "Persona LoRA system — synthetic listener archetypes",
+      "agent": "BRANCH",
+      "phase": "E",
+      "reads": [],
+      "writes": [],
+      "dependencies": [],
+      "complexity": "",
+      "output_artifact": "",
+      "description": "VOIDED — Persona LoRA out of scope per Decision 7 (DROPPED SCOPE). No synthetic archetype training.",
+      "void_reason": "Persona LoRA out of scope per dropped scope."
+    },
+    {
+      "task_id": "T-E-002",
+      "name": "Creator dashboard backend API",
+      "agent": "BRANCH",
+      "phase": "E",
+      "reads": [],
+      "writes": [],
+      "dependencies": [],
+      "complexity": "",
+      "output_artifact": "",
+      "description": "VOIDED — Creator dashboard out of scope per dropped scope. Dependent on voided Persona LoRA.",
+      "void_reason": "Creator dashboard out of scope per dropped scope."
+    },
+    {
+      "task_id": "T-E-003",
+      "name": "Creator dashboard frontend (React SPA)",
+      "agent": "ROOK",
+      "phase": "E",
+      "reads": [],
+      "writes": [],
+      "dependencies": [],
+      "complexity": "",
+      "output_artifact": "",
+      "description": "VOIDED — Creator dashboard out of scope per dropped scope. Dependent on voided T-E-002.",
+      "void_reason": "Creator dashboard out of scope per dropped scope."
+    },
+    {
+      "task_id": "T-F-001",
+      "name": "Integration tests — end-to-end pipeline",
+      "agent": "REVIEW",
+      "phase": "F",
+      "reads": ["agents/review.md", "missions/MSN-2026-001/ARCHITECTURE.md", "missions/MSN-2026-001/intelligence/PRD.md"],
+      "writes": ["missions/MSN-2026-001/implementation/phase_f/tests/"],
+      "dependencies": ["T-B-004", "T-C-001", "T-C-002", "T-D-002"],
+      "complexity": "L",
+      "output_artifact": "test_integration.py — full pipeline: variant gen → TTS → feedback → preference update",
+      "description": "Write end-to-end integration tests for the complete pipeline: segment in → Gemini variant gen → ElevenLabs TTS → feedback recording → reward score update per Architecture §7"
+    },
+    {
+      "task_id": "T-F-002",
+      "name": "Load tests — throughput and latency profiling",
+      "agent": "REVIEW",
+      "phase": "F",
+      "reads": ["agents/review.md", "missions/MSN-2026-001/ARCHITECTURE.md"],
+      "writes": ["missions/MSN-2026-001/implementation/phase_f/tests/"],
+      "dependencies": ["T-D-004", "T-F-001"],
+      "complexity": "M",
+      "output_artifact": "locustfile.py or k6 script, latency/throughput report, Gemini API rate limit analysis",
+      "description": "Run load tests simulating concurrent listeners, profile Gemini API latency, ElevenLabs TTS throughput, cache effectiveness"
+    },
+    {
+      "task_id": "T-F-003",
+      "name": "Kubernetes deployment configs (simplified)",
+      "agent": "BOOTHROYD",
+      "phase": "F",
+      "reads": ["agents/boothroyd.md", "missions/MSN-2026-001/ARCHITECTURE.md"],
+      "writes": ["missions/MSN-2026-001/implementation/phase_f/k8s/"],
+      "dependencies": ["T-A-007"],
+      "complexity": "M",
+      "output_artifact": "k8s manifests: Deployment (api-svc), Ingress, HPA, ConfigMap for env vars",
+      "description": "Write Kubernetes manifests for the API service only. No GPU nodes, no database StatefulSets (all managed cloud services)."
+    },
+    {
+      "task_id": "T-F-004",
+      "name": "CI/CD pipeline — GitHub Actions",
+      "agent": "BOOTHROYD",
+      "phase": "F",
+      "reads": ["agents/boothroyd.md", "missions/MSN-2026-001/ARCHITECTURE.md"],
+      "writes": ["missions/MSN-2026-001/implementation/phase_f/cicd/"],
+      "dependencies": ["T-F-003"],
+      "complexity": "M",
+      "output_artifact": ".github/workflows/ci.yml, .github/workflows/cd.yml — lint, test, build, deploy pipeline",
+      "description": "Implement CI/CD: lint → test → build Docker image → push to registry → deploy to K8s"
+    },
+    {
+      "task_id": "T-F-005",
+      "name": "Production readiness review",
+      "agent": "REVIEW",
+      "phase": "F",
+      "reads": ["agents/review.md", "missions/MSN-2026-001/ARCHITECTURE.md", "missions/MSN-2026-001/intelligence/PRD.md"],
+      "writes": ["missions/MSN-2026-001/implementation/phase_f/review/"],
+      "dependencies": ["T-F-001", "T-F-002"],
+      "complexity": "M",
+      "output_artifact": "review_report.md — security audit, architecture compliance check, performance validation, risk assessment",
+      "description": "Conduct production readiness review: security analysis, architecture compliance against updated ARCHITECTURE.md, performance validation against Success Metrics"
+    },
+    {
+      "task_id": "T-F-006",
+      "name": "BOND approval gate — final sign-off",
+      "agent": "BOND",
+      "phase": "F",
+      "reads": ["agents/bond.md", "missions/MSN-2026-001/dossier.md", "missions/MSN-2026-001/ARCHITECTURE.md", "missions/MSN-2026-001/intelligence/PRD.md", "missions/MSN-2026-001/intelligence/Roadmap.md"],
+      "writes": ["missions/MSN-2026-001/final_mission_report.md"],
+      "dependencies": ["T-F-005"],
+      "complexity": "S",
+      "output_artifact": "final_mission_report.md — mission outcome, objective completion status, metrics vs targets, recommendations",
+      "description": "BOND final sign-off: verify all objectives met, success metrics achieved, review passed, approve production deployment"
+    },
+    {
+      "task_id": "T-F-007",
+      "name": "Sync backlog.json summary counts",
+      "agent": "MONEYPENNY",
+      "phase": "F",
+      "reads": ["missions/MSN-2026-001/execution_state.json"],
+      "writes": ["missions/MSN-2026-001/backlog.json"],
+      "dependencies": [],
+      "complexity": "S",
+      "output_artifact": "Updated summary with correct completed/remaining counts",
+      "description": "Update backlog.json summary block to reflect actual completed task count (3) and remaining (20). Low-priority admin task from checkpoint review MINOR debt."
+    },
+    {
+      "task_id": "T-F-009",
+      "name": "Next.js project setup",
+      "agent": "ROOK",
+      "phase": "F",
+      "dependencies": [],
+      "complexity": "S",
+      "output_artifact": "frontend/ project scaffold",
+      "reads": [
+        "agents/rook.md",
+        "knowledge/decisions.md",
+        "missions/MSN-2026-001/ARCHITECTURE.md"
+      ],
+      "writes": [
+        "missions/MSN-2026-001/implementation/phase_f/"
+      ],
+      "description": "Initialize Next.js app with App Router, Tailwind CSS, shadcn/ui, React Query, Zustand, Howler.js"
+    },
+    {
+      "task_id": "T-F-010",
+      "name": "API client layer",
+      "agent": "ROOK",
+      "phase": "F",
+      "dependencies": ["T-F-009"],
+      "complexity": "M",
+      "output_artifact": "frontend/lib/api/",
+      "reads": [
+        "agents/rook.md",
+        "missions/MSN-2026-001/ARCHITECTURE.md",
+        "missions/MSN-2026-001/implementation/phase_a/api/"
+      ],
+      "writes": [
+        "missions/MSN-2026-001/implementation/phase_f/"
+      ],
+      "description": "Type-safe API client for all backend endpoints. Auto-generated types from Pydantic schemas."
+    },
+    {
+      "task_id": "T-F-011",
+      "name": "Listener UI — core screens",
+      "agent": "ROOK",
+      "phase": "F",
+      "dependencies": ["T-F-010"],
+      "complexity": "XL",
+      "output_artifact": "frontend/app/(listener)/",
+      "reads": [
+        "agents/rook.md",
+        "missions/MSN-2026-001/ARCHITECTURE.md",
+        "missions/MSN-2026-001/implementation/phase_b/",
+        "missions/MSN-2026-001/implementation/phase_c/"
+      ],
+      "writes": [
+        "missions/MSN-2026-001/implementation/phase_f/"
+      ],
+      "description": "All listener-facing screens: story player, variant selection, feedback UI, session history, style preference visualization"
+    },
+    {
+      "task_id": "T-F-012",
+      "name": "Admin Dashboard — core screens",
+      "agent": "ROOK",
+      "phase": "F",
+      "dependencies": ["T-F-010"],
+      "complexity": "XL",
+      "output_artifact": "frontend/app/(admin)/",
+      "reads": [
+        "agents/rook.md",
+        "missions/MSN-2026-001/ARCHITECTURE.md",
+        "missions/MSN-2026-001/implementation/phase_d/"
+      ],
+      "writes": [
+        "missions/MSN-2026-001/implementation/phase_f/"
+      ],
+      "description": "All admin screens: user preference monitor, A/B test management, drift reports, session analytics, evaluation records viewer"
+    },
+    {
+      "task_id": "T-F-013",
+      "name": "Shared component library",
+      "agent": "ROOK",
+      "phase": "F",
+      "dependencies": ["T-F-009"],
+      "complexity": "M",
+      "output_artifact": "frontend/components/",
+      "reads": [
+        "agents/rook.md"
+      ],
+      "writes": [
+        "missions/MSN-2026-001/implementation/phase_f/"
+      ],
+      "description": "Shared UI primitives: AudioPlayer, StyleScoreRadar, FeedbackButtons, VariantCard, SessionTimeline, DataTable, StatCard"
+    },
+    {
+      "task_id": "T-F-008",
+      "name": "Update priority_matrix.md for binding decisions",
+      "agent": "MONEYPENNY",
+      "phase": "F",
+      "reads": ["missions/MSN-2026-001/execution_graph.json", "knowledge/decisions.md"],
+      "writes": ["missions/MSN-2026-001/priority_matrix.md"],
+      "dependencies": [],
+      "complexity": "S",
+      "output_artifact": "Updated priority matrix without voided task references",
+      "description": "Rewrite priority_matrix.md to reflect binding decisions: remove voided task references, update critical path, fix parallelization map. Low-priority admin task from checkpoint review MINOR debt."
+    }
+  ]
+}
