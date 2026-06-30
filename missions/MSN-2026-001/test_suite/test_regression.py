@@ -14,32 +14,37 @@ API_KEY = "regression-test-api-key"
 # REGRESSION-001: Gemini service handles empty input
 # ---------------------------------------------------------------------------
 class TestRegression001:
-    @patch("app.services.gemini_service.genai")
-    def test_gemini_handles_empty_input(self, mock_genai):
+    @patch("app.services.gemini_service._get_client")
+    def test_nim_handles_empty_input(self, mock_get_client):
         from app.services.gemini_service import generate_variant
-        mock_model = MagicMock()
-        mock_response = MagicMock()
-        mock_response.text = ""
-        mock_model.generate_content.return_value = mock_response
-        mock_genai.GenerativeModel.return_value = mock_model
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+        mock_choice = MagicMock()
+        mock_choice.message.content = ""
+        mock_client.chat.completions.create.return_value = MagicMock(
+            choices=[mock_choice]
+        )
 
-        with patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}):
+        with patch.dict("os.environ", {"NIM_API_KEY": "test-key"}):
             result = generate_variant("", "system prompt")
         assert result == ""
 
 
 # ---------------------------------------------------------------------------
-# REGRESSION-002: ElevenLabs handles empty text gracefully
+# REGRESSION-002: Magpie TTS handles empty text gracefully
 # ---------------------------------------------------------------------------
 class TestRegression002:
-    @patch("app.services.elevenlabs_service.ElevenLabs")
-    def test_elevenlabs_empty_text_returns_bytes(self, mock_eleven):
+    @patch("app.services.elevenlabs_service._get_client")
+    def test_magpie_tts_empty_text_returns_bytes(self, mock_get_client):
         from app.services.elevenlabs_service import synthesize
         mock_client = MagicMock()
-        mock_eleven.return_value = mock_client
-        mock_client.generate.return_value = [b""]
-        with patch.dict("os.environ", {"ELEVENLABS_API_KEY": "test-key"}):
-            result = synthesize("", voice_id="Rachel")
+        mock_get_client.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.read.return_value = b""
+        mock_client.audio.speech.create.return_value = mock_response
+
+        with patch.dict("os.environ", {"NIM_API_KEY": "test-key", "AUDIO_CACHE_DIR": "/tmp/test_audio_reg002"}):
+            result = synthesize("", voice_id="default")
         assert isinstance(result, bytes)
 
 

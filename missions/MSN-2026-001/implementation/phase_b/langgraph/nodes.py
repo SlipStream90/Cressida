@@ -53,7 +53,7 @@ async def generate_variants(state: WorkflowState) -> WorkflowState:
             style=style_key,
             style_prompt_key=f"STYLE_{style_key.upper()}",
             generated_text=generated,
-            model_version="gemini-1.5-pro",
+            model_version="meta/llama-3.3-70b-instruct",
         )
         variants.append(variant.model_dump())
     return {**state, "variants": variants}

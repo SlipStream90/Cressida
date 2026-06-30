@@ -38,8 +38,7 @@ jobs:
     - name: Run tests
       run: pytest
       env:
-        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+        NIM_API_KEY: ${{ secrets.NIM_API_KEY }}
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         REDIS_URL: ${{ secrets.REDIS_URL }}

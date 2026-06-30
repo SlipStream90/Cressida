@@ -23,16 +23,11 @@ spec:
         ports:
         - containerPort: 8000
         env:
-        - name: GEMINI_API_KEY
+        - name: NIM_API_KEY
           valueFrom:
             secretKeyRef:
               name: echo-secrets
-              key: gemini-api-key
-        - name: ELEVENLABS_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: echo-secrets
-              key: elevenlabs-api-key
+              key: nim-api-key
         - name: SUPABASE_URL
           valueFrom:
             secretKeyRef:

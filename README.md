@@ -140,6 +140,7 @@ cressida/
 │   ├── tools/               # Tool definitions and implementations
 │   └── agent_factory.py     # Instantiates all 9 agents for a given provider
 ├── evaluation/      # Scoring, reward store, feedback collector
+├── obsidian/        # Obsidian bridge: bidirectional vault sync, inbox watcher
 ├── knowledge/       # Persistent lessons and architectural decisions
 ├── memory/          # Strategic, mission, and agent memory layers
 ├── missions/        # Output directory — one folder per mission
@@ -179,6 +180,75 @@ After architecture is complete, BOND runs `bond_approve_plan` as a DAG task. It 
 - **escalate** — execution halts; writes an escalation JSON for human review; resume with `cressida resolve-escalation`
 
 This is a hard gate, not advisory. Nothing downstream runs without BOND's sign-off.
+
+---
+
+## Obsidian integration
+
+CRESSIDA has a bidirectional sync with an [Obsidian](https://obsidian.md) vault. Mission artifacts, BOND decisions, and accumulated knowledge are mirrored into the vault in real time; the vault's Inbox folder can trigger new missions without touching the CLI.
+
+### Vault layout
+
+```
+Vault/
+└── Cressida/
+    ├── Inbox/              ← drop a brief note here to trigger a mission
+    ├── Missions/
+    │   └── MSN-2026-001/
+    │       ├── Brief.md
+    │       ├── Research Report.md
+    │       ├── PRD.md
+    │       ├── Architecture.md
+    │       └── Review.md
+    ├── Knowledge/
+    │   ├── lessons.md
+    │   ├── patterns.md
+    │   └── decisions.md
+    └── BOND Decisions/
+```
+
+### Setup
+
+```bash
+export CRESSIDA_OBSIDIAN_VAULT="C:/Users/you/Documents/MyVault"
+# or set vault_path in cressida.yaml under the obsidian: key
+```
+
+`cressida.yaml`:
+
+```yaml
+obsidian:
+  vault_path: "C:/Users/you/Documents/MyVault"
+  cressida_folder: "Cressida"
+  inbox_folder: "Inbox"
+  poll_interval_seconds: 15
+```
+
+### Triggering a mission from the vault
+
+Create a `.md` note in `Vault/Cressida/Inbox/` with `cressida: true` in the YAML frontmatter:
+
+```markdown
+---
+cressida: true
+brief: "Build a REST API for a todo app with PostgreSQL"
+priority: high
+provider: anthropic
+---
+```
+
+The daemon polls the inbox every 15 seconds (configurable), picks up the note, launches a mission, and moves the note to `Inbox/_processed/`.
+
+### What syncs automatically
+
+| Event | What lands in the vault |
+|---|---|
+| Task completes | Mission artifacts (PRD, Architecture, Review, …) → `Missions/<id>/` |
+| Mission completes | Full artifact set + `Index.md` with wikilinks to every artifact |
+| BOND gate decision | Verdict note → `BOND Decisions/` |
+| Post-mortem | Lessons and patterns → `Knowledge/` |
+
+Agents can also search the vault during research — INTELLIGENCE queries vault notes alongside Cressida's internal strategic memory.
 
 ---
 
