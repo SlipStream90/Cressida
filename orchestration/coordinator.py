@@ -145,7 +145,9 @@ class Coordinator:
 
     def _persist_state(self, state: MissionState) -> None:
         """Write execution_state.json so MCP status tools can read it."""
-        path = Path("missions") / state.mission_id / "execution_state.json"
+        # Use absolute path based on this file's location to avoid CWD issues
+        cressida_root = Path(__file__).parent.parent.parent
+        path = cressida_root / "missions" / state.mission_id / "execution_state.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         tasks_data = {}
         for tid, task in state.tasks.items():

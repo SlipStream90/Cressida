@@ -52,6 +52,33 @@ mcp = FastMCP(
     ),
 )
 
+# ── Status monitoring (starts once on first use) ─────────────────────────────
+_monitor_started = False
+
+
+def _ensure_monitor_started() -> None:
+    """Start StatusServer + StallMonitor as background tasks (once)."""
+    global _monitor_started
+    if _monitor_started:
+        return
+    _monitor_started = True
+    try:
+        from cressida.core.events import EventBus
+        from cressida.autonomy.monitor import StatusServer, StallMonitor
+
+        bus = EventBus()
+        status_file = _MISSIONS_DIR / "status.json"
+
+        server = StatusServer(bus, status_file=str(status_file))
+        monitor = StallMonitor(bus)
+
+        loop = asyncio.get_event_loop()
+        loop.create_task(server.run())
+        loop.create_task(monitor.run())
+        print(f"[CRESSIDA] Status monitor started (status_file={status_file})")
+    except Exception as exc:
+        print(f"[CRESSIDA] Warning: Could not start status monitor: {exc}")
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -113,6 +140,8 @@ async def run_mission(
     """
     from datetime import datetime as _dt
 
+    _ensure_monitor_started()
+
     mission_id = f"mission_{_dt.now().strftime('%Y%m%d_%H%M%S')}"
 
     brief_path = _CRESSIDA_ROOT / "_mcp_brief.md"
@@ -166,6 +195,7 @@ def _persist_failure(mission_id: str, error: str) -> None:
         "updated_at": datetime.utcnow().isoformat() + "Z",
     }
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    print(f"[CRESSIDA] Persisted failure state for {mission_id}: {path}")
 
 
 async def _run_mission_bg(
@@ -187,9 +217,15 @@ async def _run_mission_bg(
         )
 
         _missions_dir()
+        print(f"[CRESSIDA] Starting mission {mission_id} with provider={provider}")
         exit_code = await _run_mission(args)
         status = "completed" if exit_code == 0 else "failed"
-        print(f"[CRESSIDA] Mission {mission_id} {status}.")
+        print(f"[CRESSIDA] Mission {mission_id} {status} (exit_code={exit_code}).")
+
+        # Ensure final state is persisted
+        state_path = _mission_path(mission_id) / "execution_state.json"
+        if not state_path.exists():
+            _persist_failure(mission_id, f"Mission ended with exit code {exit_code}")
     except Exception as exc:
         print(f"[CRESSIDA] Mission {mission_id} error in _run_mission_bg: {exc}")
         _persist_failure(mission_id, str(exc))
@@ -212,12 +248,23 @@ def mission_status(mission_id: str) -> str:
     escalations = _list_escalations(mission_id)
 
     if not state:
-        # Fall back to the global status.json if available
-        status_file = _MISSIONS_DIR / "status.json"
-        if status_file.exists():
-            global_status = json.loads(status_file.read_text(encoding="utf-8"))
-            return json.dumps(global_status, indent=2)
-        return f"No state found for mission {mission_id!r}. Is the mission ID correct?"
+        # Check if mission directory exists at all
+        mpath = _mission_path(mission_id)
+        if not mpath.exists():
+            return f"Mission {mission_id!r} not found. Available missions:\n" + "\n".join(
+                d.name for d in _missions_dir().iterdir()
+                if d.is_dir() and d.name not in ("inbox", "scheduled", "processed")
+            ) or "(none)"
+
+        # Mission exists but no execution_state.json yet — report what we have
+        files = [str(f.relative_to(mpath)) for f in mpath.rglob("*") if f.is_file()]
+        return json.dumps({
+            "mission_id": mission_id,
+            "status": "initializing",
+            "message": "Mission is starting up. execution_state.json not yet created.",
+            "files_found": len(files),
+            "sample_files": files[:10],
+        }, indent=2)
 
     tasks = state.get("tasks", {})
     counts: dict[str, int] = {}
@@ -519,4 +566,5 @@ def obsidian_sync_mission(mission_id: str) -> str:
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    _ensure_monitor_started()
     mcp.run()

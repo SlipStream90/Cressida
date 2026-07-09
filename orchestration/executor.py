@@ -167,12 +167,24 @@ class TaskExecutor:
                     ))
 
     def _persist_state(self, mission_id: str, task_status: dict[str, str]) -> None:
-        path = Path("missions") / mission_id / "execution_state.json"
+        # Use absolute path based on this file's location to avoid CWD issues
+        cressida_root = Path(__file__).parent.parent.parent
+        path = cressida_root / "missions" / mission_id / "execution_state.json"
         path.parent.mkdir(parents=True, exist_ok=True)
+        # Build tasks dict in the format mission_status expects
+        tasks_data = {}
+        for tid, status in task_status.items():
+            tasks_data[tid] = {
+                "status": status,
+                "agent": None,
+                "name": tid,
+                "error": None,
+            }
         path.write_text(
             json.dumps({
                 "mission_id": mission_id,
-                "task_status": task_status,
+                "status": "completed" if all(s == "completed" for s in task_status.values()) else "in_progress",
+                "tasks": tasks_data,
                 "updated_at": datetime.now().isoformat(),
             }, indent=2),
             encoding="utf-8",

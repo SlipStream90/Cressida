@@ -195,13 +195,13 @@ class OpenCodeAgent(ProviderAgentBase):
         """Extract the assistant text from `--format json` stdout.
 
         OpenCode outputs JSONL (one JSON object per line). We look for
-        the last message-type event with content.
+        the last message-type event with content, filtering out tool calls
+        and other non-text events.
         """
         raw = (stdout or "").strip()
         if not raw:
             return ""
 
-        # Try to parse as JSONL (multiple lines)
         lines = raw.splitlines()
         last_content = ""
 
@@ -212,22 +212,46 @@ class OpenCodeAgent(ProviderAgentBase):
             try:
                 data = json.loads(line)
             except json.JSONDecodeError:
-                # Not JSON — might be plain text output
-                last_content = line
+                # Not JSON — might be plain text output (skip raw JSONL lines)
+                if not line.startswith("{"):
+                    last_content = line
                 continue
 
-            if isinstance(data, dict):
-                # Look for message events with content
-                if data.get("type") == "message" and data.get("content"):
-                    last_content = data["content"]
-                # Also handle simpler result format
-                elif data.get("result"):
-                    last_content = data["result"]
-                elif data.get("text"):
-                    last_content = data["text"]
+            if not isinstance(data, dict):
+                continue
+
+            # Skip tool_use events (these are agent actions, not text output)
+            if data.get("type") == "tool_use":
+                continue
+            if data.get("type") == "tool_result":
+                continue
+
+            # Look for message events with content
+            if data.get("type") == "message" and data.get("content"):
+                content = data["content"]
+                # Filter out tool_use blocks from content
+                if isinstance(content, list):
+                    text_parts = [
+                        part.get("text", "")
+                        for part in content
+                        if isinstance(part, dict) and part.get("type") == "text"
+                    ]
+                    content = "\n".join(text_parts)
+                if content:
+                    last_content = content
+
+            # Also handle simpler result format
+            elif data.get("result"):
+                last_content = data["result"]
+            elif data.get("text"):
+                last_content = data["text"]
 
         if last_content:
-            return last_content
+            return last_content.strip()
 
-        # Fallback: return raw output
-        return raw
+        # Fallback: try to extract any text-looking content from the raw output
+        # Look for markdown-formatted content (common in agent outputs)
+        if "```" in raw or "# " in raw:
+            return raw
+
+        return ""
