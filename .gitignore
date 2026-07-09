@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+eggs/
+*.whl
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Secrets and API keys
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Mission runtime output (generated, not source)
+missions/MSN-*/
+missions/inbox/
+missions/scheduled/
+missions/status.json
+
+# Memory and state (runtime data)
+memory/*.json
+memory/postmortems/
+
+# Claude CLI
+.claude/
+
+# Logs
+*.log
+logs/
+
+# Evaluation output
+evaluations/
+
+# Python
+*.pyc
