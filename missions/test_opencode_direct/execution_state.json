@@ -1,0 +1,49 @@
+{
+  "mission_id": "test_opencode_direct",
+  "status": "IN_PROGRESS",
+  "tasks": {
+    "research": {
+      "status": "COMPLETED",
+      "agent": "INTELLIGENCE",
+      "name": "Research phase",
+      "error": null
+    },
+    "product_definition": {
+      "status": "COMPLETED",
+      "agent": "INTELLIGENCE",
+      "name": "Product definition",
+      "error": null
+    },
+    "architecture": {
+      "status": "PENDING",
+      "agent": "Q",
+      "name": "Architecture design",
+      "error": null
+    },
+    "bond_approve_plan": {
+      "status": "PENDING",
+      "agent": "BOND",
+      "name": "BOND: approve plan",
+      "error": null
+    },
+    "planning": {
+      "status": "PENDING",
+      "agent": "TANNER",
+      "name": "Task planning",
+      "error": null
+    },
+    "implementation": {
+      "status": "PENDING",
+      "agent": "BRANCH",
+      "name": "Implementation",
+      "error": null
+    },
+    "review": {
+      "status": "PENDING",
+      "agent": "REVIEW",
+      "name": "Code review",
+      "error": null
+    }
+  },
+  "updated_at": "2026-07-09T11:09:02.573552"
+}

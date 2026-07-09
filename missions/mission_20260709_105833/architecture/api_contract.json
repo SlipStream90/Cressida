@@ -1,0 +1,95 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "FastAPI Hello World API",
+    "description": "A minimal FastAPI hello world service with two GET endpoints, Pydantic response models, and auto-generated Swagger docs.",
+    "version": "1.0.0",
+    "contact": {
+      "name": "Cressida Pipeline",
+      "url": "https://github.com/anomalyco/cressida"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8000",
+      "description": "Development server"
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health Check",
+        "description": "Returns service health status",
+        "operationId": "health_check",
+        "responses": {
+          "200": {
+            "description": "Successful health check",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/hello/{name}": {
+      "get": {
+        "summary": "Hello Endpoint",
+        "description": "Returns personalized greeting",
+        "operationId": "hello_name",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "description": "Name to greet",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful greeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HelloResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "HealthResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "Health status indicator"
+          }
+        },
+        "required": ["status"],
+        "title": "HealthResponse"
+      },
+      "HelloResponse": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Personalized greeting message"
+          }
+        },
+        "required": ["message"],
+        "title": "HelloResponse"
+      }
+    }
+  }
+}

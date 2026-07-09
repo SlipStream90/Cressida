@@ -201,9 +201,32 @@ def _ollama_reachable(host: str = "http://localhost:11434", timeout: float = 1.0
 
 
 def _claude_cli_available() -> bool:
-    """Return True if the `claude` CLI binary is installed and locatable."""
+    """Return True if the `claude` CLI binary is installed and actually working.
+
+    Probes with a minimal request to catch rate-limited or broken installs.
+    """
     from cressida.core.providers.claude_cli_agent import claude_cli_path
-    return claude_cli_path() is not None
+    path = claude_cli_path()
+    if not path:
+        return False
+    # Quick probe: run a trivial completion and check for errors
+    try:
+        import subprocess
+        proc = subprocess.run(
+            [path, "-p", "--output-format", "json", "--model", "sonnet"],
+            input="Reply with only the word OK",
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=15,
+        )
+        if proc.returncode != 0:
+            return False
+        import json
+        data = json.loads(proc.stdout.strip())
+        if data.get("is_error"):
+            return False
+        return True
+    except Exception:
+        return False
 
 
 def _opencode_available() -> bool:

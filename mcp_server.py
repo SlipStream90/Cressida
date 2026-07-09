@@ -125,6 +125,7 @@ async def run_mission(
     _running_missions[mission_id] = task
 
     out_dir = _mission_path(mission_id)
+    out_dir.mkdir(parents=True, exist_ok=True)
     return (
         f"Mission started: {mission_id}\n"
         f"Output: {out_dir}\n\n"
@@ -142,6 +143,7 @@ async def _background_mission(
         await _run_mission_bg(mission_id, brief_path, provider, ollama_model, priority)
     except Exception as exc:
         print(f"[CRESSIDA] Mission {mission_id} failed: {exc}")
+        _persist_failure(mission_id, str(exc))
     finally:
         _running_missions.pop(mission_id, None)
         try:
@@ -152,28 +154,46 @@ async def _background_mission(
             pass
 
 
+def _persist_failure(mission_id: str, error: str) -> None:
+    """Write a failure execution_state.json so mission_status can report it."""
+    path = _mission_path(mission_id) / "execution_state.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "mission_id": mission_id,
+        "status": "failed",
+        "tasks": {},
+        "error": error,
+        "updated_at": datetime.utcnow().isoformat() + "Z",
+    }
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
 async def _run_mission_bg(
     mission_id: str, brief_path: str, provider: str, ollama_model: str, priority: str
 ) -> None:
-    from cressida.cli.commands import run_mission as _run_mission
-    import argparse
-
-    args = argparse.Namespace(
-        brief=brief_path,
-        mission_id=mission_id,
-        provider=provider,
-        ollama_model=ollama_model,
-        ollama_host="http://localhost:11434",
-        priority=priority,
-    )
-
-    _missions_dir()
     prev_cwd = os.getcwd()
     os.chdir(_CRESSIDA_ROOT)
     try:
+        from cressida.cli.commands import run_mission as _run_mission
+        import argparse
+
+        args = argparse.Namespace(
+            brief=brief_path,
+            mission_id=mission_id,
+            provider=provider,
+            ollama_model=ollama_model,
+            ollama_host="http://localhost:11434",
+            priority=priority,
+        )
+
+        _missions_dir()
         exit_code = await _run_mission(args)
         status = "completed" if exit_code == 0 else "failed"
         print(f"[CRESSIDA] Mission {mission_id} {status}.")
+    except Exception as exc:
+        print(f"[CRESSIDA] Mission {mission_id} error in _run_mission_bg: {exc}")
+        _persist_failure(mission_id, str(exc))
+        raise
     finally:
         os.chdir(prev_cwd)
 
@@ -207,11 +227,14 @@ def mission_status(mission_id: str) -> str:
 
     result = {
         "mission_id": mission_id,
+        "status": state.get("status", "unknown"),
         "task_counts": counts,
         "total_tasks": len(tasks),
         "tasks": {tid: {"status": t.get("status"), "agent": t.get("agent")} for tid, t in tasks.items()},
         "pending_escalations": escalations,
     }
+    if state.get("error"):
+        result["error"] = state["error"]
     return json.dumps(result, indent=2)
 
 

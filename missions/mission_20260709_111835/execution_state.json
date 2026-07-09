@@ -1,0 +1,49 @@
+{
+  "mission_id": "mission_20260709_111835",
+  "status": "COMPLETED",
+  "tasks": {
+    "research": {
+      "status": "COMPLETED",
+      "agent": "INTELLIGENCE",
+      "name": "Research phase",
+      "error": null
+    },
+    "product_definition": {
+      "status": "COMPLETED",
+      "agent": "INTELLIGENCE",
+      "name": "Product definition",
+      "error": null
+    },
+    "architecture": {
+      "status": "COMPLETED",
+      "agent": "Q",
+      "name": "Architecture design",
+      "error": null
+    },
+    "bond_approve_plan": {
+      "status": "COMPLETED",
+      "agent": "BOND",
+      "name": "BOND: approve plan",
+      "error": null
+    },
+    "planning": {
+      "status": "COMPLETED",
+      "agent": "TANNER",
+      "name": "Task planning",
+      "error": null
+    },
+    "implementation": {
+      "status": "COMPLETED",
+      "agent": "BRANCH",
+      "name": "Implementation",
+      "error": null
+    },
+    "review": {
+      "status": "COMPLETED",
+      "agent": "REVIEW",
+      "name": "Code review",
+      "error": null
+    }
+  },
+  "updated_at": "2026-07-09T11:38:55.023709"
+}

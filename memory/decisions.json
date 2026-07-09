@@ -96,5 +96,47 @@
       "scheduling",
       "mission_20260709_091430"
     ]
+  },
+  {
+    "id": "schedule_test_direct",
+    "title": "Execution schedule",
+    "description": "Schedule with 7 tasks across 7 batches",
+    "alternatives": [],
+    "chosen": "topological_sort",
+    "rationale": "Optimal parallelization with dependency resolution",
+    "author": "coordinator",
+    "timestamp": "2026-07-09T10:59:38.906236",
+    "tags": [
+      "scheduling",
+      "test_direct"
+    ]
+  },
+  {
+    "id": "schedule_test_opencode",
+    "title": "Execution schedule",
+    "description": "Schedule with 7 tasks across 7 batches",
+    "alternatives": [],
+    "chosen": "topological_sort",
+    "rationale": "Optimal parallelization with dependency resolution",
+    "author": "coordinator",
+    "timestamp": "2026-07-09T11:04:21.673727",
+    "tags": [
+      "scheduling",
+      "test_opencode"
+    ]
+  },
+  {
+    "id": "schedule_test_opencode_direct",
+    "title": "Execution schedule",
+    "description": "Schedule with 7 tasks across 7 batches",
+    "alternatives": [],
+    "chosen": "topological_sort",
+    "rationale": "Optimal parallelization with dependency resolution",
+    "author": "coordinator",
+    "timestamp": "2026-07-09T11:06:11.761949",
+    "tags": [
+      "scheduling",
+      "test_opencode_direct"
+    ]
   }
 ]

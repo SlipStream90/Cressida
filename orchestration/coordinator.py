@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from cressida.core.events import Event, EventBus, EventType
@@ -63,12 +65,14 @@ class Coordinator:
 
         except CyclicDependencyError as e:
             state.status = MissionStatus.FAILED
+            self._persist_state(state)
             await self._event_bus.publish(
                 Event(type=EventType.MISSION_FAILED, data={"mission_id": state.mission_id, "error": str(e)}, source="coordinator")
             )
 
         except Exception as e:
             state.status = MissionStatus.FAILED
+            self._persist_state(state)
             await self._event_bus.publish(
                 Event(type=EventType.MISSION_FAILED, data={"mission_id": state.mission_id, "error": str(e)}, source="coordinator")
             )
@@ -111,6 +115,8 @@ class Coordinator:
             elif task.status == TaskStatus.FAILED:
                 state.fail_task(task.id, task.error or "unknown error")
 
+        self._persist_state(state)
+
     def _finalize_mission(self, state: MissionState) -> None:
         all_completed = all(
             t.status == TaskStatus.COMPLETED for t in state.tasks.values()
@@ -134,3 +140,25 @@ class Coordinator:
             self._event_bus.publish(
                 Event(type=EventType.MISSION_COMPLETED, data={"mission_id": state.mission_id}, source="coordinator")
             )
+
+        self._persist_state(state)
+
+    def _persist_state(self, state: MissionState) -> None:
+        """Write execution_state.json so MCP status tools can read it."""
+        path = Path("missions") / state.mission_id / "execution_state.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tasks_data = {}
+        for tid, task in state.tasks.items():
+            tasks_data[tid] = {
+                "status": task.status.value if hasattr(task.status, "value") else str(task.status),
+                "agent": task.agent.value if task.agent else None,
+                "name": task.name,
+                "error": task.error,
+            }
+        payload = {
+            "mission_id": state.mission_id,
+            "status": state.status.value if hasattr(state.status, "value") else str(state.status),
+            "tasks": tasks_data,
+            "updated_at": datetime.now().isoformat(),
+        }
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")

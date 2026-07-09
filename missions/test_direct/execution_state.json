@@ -1,0 +1,49 @@
+{
+  "mission_id": "test_direct",
+  "status": "IN_PROGRESS",
+  "tasks": {
+    "research": {
+      "status": "FAILED",
+      "agent": "INTELLIGENCE",
+      "name": "Research phase",
+      "error": "Claude CLI exited 1 for role INTELLIGENCE.\nstderr: "
+    },
+    "product_definition": {
+      "status": "FAILED",
+      "agent": "INTELLIGENCE",
+      "name": "Product definition",
+      "error": "Claude CLI exited 1 for role INTELLIGENCE.\nstderr: "
+    },
+    "architecture": {
+      "status": "FAILED",
+      "agent": "Q",
+      "name": "Architecture design",
+      "error": "Claude CLI exited 1 for role Q.\nstderr: "
+    },
+    "bond_approve_plan": {
+      "status": "PENDING",
+      "agent": "BOND",
+      "name": "BOND: approve plan",
+      "error": null
+    },
+    "planning": {
+      "status": "PENDING",
+      "agent": "TANNER",
+      "name": "Task planning",
+      "error": null
+    },
+    "implementation": {
+      "status": "PENDING",
+      "agent": "BRANCH",
+      "name": "Implementation",
+      "error": null
+    },
+    "review": {
+      "status": "PENDING",
+      "agent": "REVIEW",
+      "name": "Code review",
+      "error": null
+    }
+  },
+  "updated_at": "2026-07-09T11:00:05.842101"
+}
