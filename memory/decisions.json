@@ -1,0 +1,100 @@
+[
+  {
+    "id": "schedule_mission_pathtest",
+    "title": "Execution schedule",
+    "description": "Schedule with 5 tasks across 5 batches",
+    "alternatives": [],
+    "chosen": "topological_sort",
+    "rationale": "Optimal parallelization with dependency resolution",
+    "author": "coordinator",
+    "timestamp": "2026-07-08T14:40:05.868922",
+    "tags": [
+      "scheduling",
+      "mission_pathtest"
+    ]
+  },
+  {
+    "id": "schedule_mission_20260708_224738",
+    "title": "Execution schedule",
+    "description": "Schedule with 5 tasks across 5 batches",
+    "alternatives": [],
+    "chosen": "topological_sort",
+    "rationale": "Optimal parallelization with dependency resolution",
+    "author": "coordinator",
+    "timestamp": "2026-07-08T22:47:39.070124",
+    "tags": [
+      "scheduling",
+      "mission_20260708_224738"
+    ]
+  },
+  {
+    "id": "schedule_mission_20260708_225533",
+    "title": "Execution schedule",
+    "description": "Schedule with 5 tasks across 5 batches",
+    "alternatives": [],
+    "chosen": "topological_sort",
+    "rationale": "Optimal parallelization with dependency resolution",
+    "author": "coordinator",
+    "timestamp": "2026-07-08T22:55:33.835937",
+    "tags": [
+      "scheduling",
+      "mission_20260708_225533"
+    ]
+  },
+  {
+    "id": "schedule_mission_mcp_test_20260709_085603",
+    "title": "Execution schedule",
+    "description": "Schedule with 5 tasks across 5 batches",
+    "alternatives": [],
+    "chosen": "topological_sort",
+    "rationale": "Optimal parallelization with dependency resolution",
+    "author": "coordinator",
+    "timestamp": "2026-07-09T08:56:03.627133",
+    "tags": [
+      "scheduling",
+      "mission_mcp_test_20260709_085603"
+    ]
+  },
+  {
+    "id": "schedule_mission_20260709_090253",
+    "title": "Execution schedule",
+    "description": "Schedule with 5 tasks across 5 batches",
+    "alternatives": [],
+    "chosen": "topological_sort",
+    "rationale": "Optimal parallelization with dependency resolution",
+    "author": "coordinator",
+    "timestamp": "2026-07-09T09:02:54.164639",
+    "tags": [
+      "scheduling",
+      "mission_20260709_090253"
+    ]
+  },
+  {
+    "id": "schedule_mission_20260709_090402",
+    "title": "Execution schedule",
+    "description": "Schedule with 5 tasks across 5 batches",
+    "alternatives": [],
+    "chosen": "topological_sort",
+    "rationale": "Optimal parallelization with dependency resolution",
+    "author": "coordinator",
+    "timestamp": "2026-07-09T09:04:02.911096",
+    "tags": [
+      "scheduling",
+      "mission_20260709_090402"
+    ]
+  },
+  {
+    "id": "schedule_mission_20260709_091430",
+    "title": "Execution schedule",
+    "description": "Schedule with 5 tasks across 5 batches",
+    "alternatives": [],
+    "chosen": "topological_sort",
+    "rationale": "Optimal parallelization with dependency resolution",
+    "author": "coordinator",
+    "timestamp": "2026-07-09T09:14:30.301149",
+    "tags": [
+      "scheduling",
+      "mission_20260709_091430"
+    ]
+  }
+]

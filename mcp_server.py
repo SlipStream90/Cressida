@@ -34,7 +34,8 @@ from mcp.server.fastmcp import FastMCP
 # mcp_server.py lives at <root>/cressida/mcp_server.py
 _CRESSIDA_PACKAGE = Path(__file__).parent          # .../cressida/
 _CRESSIDA_ROOT    = _CRESSIDA_PACKAGE.parent       # .../Cressida/
-_MISSIONS_DIR     = _CRESSIDA_PACKAGE / "missions"
+# Missions are written to <root>/missions/ (relative to project root)
+_MISSIONS_DIR     = _CRESSIDA_ROOT / "missions"    # .../Cressida/missions/
 
 # Make sure the package is importable
 if str(_CRESSIDA_ROOT) not in sys.path:
@@ -79,8 +80,12 @@ def _list_escalations(mission_id: str) -> list[str]:
 
 # ── Tools ─────────────────────────────────────────────────────────────────────
 
+# Track running missions
+_running_missions: dict[str, asyncio.Task] = {}
+
+
 @mcp.tool()
-def run_mission(
+async def run_mission(
     brief: str,
     provider: str = "auto",
     ollama_model: str = "llama3.2",
@@ -88,51 +93,89 @@ def run_mission(
 ) -> str:
     """Start a new Cressida mission from a plain-English brief.
 
-    Cressida will spin up all 9 agents (BOND, INTELLIGENCE, Q, TANNER, BRANCH,
-    ROOK, BOOTHROYD, MONEYPENNY, REVIEW) and run the full pipeline: research →
-    spec → architecture → BOND gate → parallel implementation → review.
+    Cressida spins up 9 agents and runs: research -> spec -> architecture ->
+    BOND gate -> implementation -> review. Returns immediately with a mission ID.
+
+    Usage flow:
+      1. Call run_mission with your brief -> get mission_id
+      2. Call mission_status to check progress
+      3. Call read_mission_file to inspect outputs
 
     Args:
-        brief:        What you want built, in plain English.
-        provider:     LLM provider — auto | anthropic | openai | gemini | groq | ollama
+        brief:        What you want built. Can be a plain-English description
+                      or a path to a markdown file containing a PRD.
+        provider:     auto | opencode | claude_cli | anthropic | openai | gemini | groq | ollama
         ollama_model: Only used when provider=ollama. Default: llama3.2
-        priority:     low | medium | high. Affects task ordering.
+        priority:     low | medium | high.
 
     Returns:
-        Mission ID and the output directory path.
+        Mission ID and status message.
     """
-    from cressida.cli.commands import run_mission as _run_mission
+    from datetime import datetime as _dt
 
-    # Write brief to a temp file so the existing run_mission() can consume it
+    mission_id = f"mission_{_dt.now().strftime('%Y%m%d_%H%M%S')}"
+
     brief_path = _CRESSIDA_ROOT / "_mcp_brief.md"
     brief_path.write_text(brief, encoding="utf-8")
 
+    # Run in background — returns immediately so the MCP client doesn't time out
+    task = asyncio.create_task(
+        _background_mission(mission_id, str(brief_path), provider, ollama_model, priority)
+    )
+    _running_missions[mission_id] = task
+
+    out_dir = _mission_path(mission_id)
+    return (
+        f"Mission started: {mission_id}\n"
+        f"Output: {out_dir}\n\n"
+        f"The mission is running in the background. "
+        f"Call mission_status(mission_id=\"{mission_id}\") to check progress. "
+        f"Files will appear in the output directory as each phase completes."
+    )
+
+
+async def _background_mission(
+    mission_id: str, brief_path: str, provider: str, ollama_model: str, priority: str
+) -> None:
+    """Run a mission in the background."""
     try:
-        # run_mission is synchronous-entry but async inside; run it in a new loop
-        # to avoid conflicts if we're already in an async context
-        result = asyncio.run(
-            _async_run_mission(str(brief_path), provider, ollama_model, priority)
-        )
-        return result
+        await _run_mission_bg(mission_id, brief_path, provider, ollama_model, priority)
+    except Exception as exc:
+        print(f"[CRESSIDA] Mission {mission_id} failed: {exc}")
     finally:
-        if brief_path.exists():
-            brief_path.unlink()
+        _running_missions.pop(mission_id, None)
+        try:
+            bp = Path(brief_path)
+            if bp.exists():
+                bp.unlink()
+        except Exception:
+            pass
 
 
-async def _async_run_mission(brief_path: str, provider: str, ollama_model: str, priority: str) -> str:
+async def _run_mission_bg(
+    mission_id: str, brief_path: str, provider: str, ollama_model: str, priority: str
+) -> None:
     from cressida.cli.commands import run_mission as _run_mission
     import argparse
 
     args = argparse.Namespace(
         brief=brief_path,
+        mission_id=mission_id,
         provider=provider,
         ollama_model=ollama_model,
         ollama_host="http://localhost:11434",
         priority=priority,
     )
-    mission_id = await _run_mission(args)
-    out_dir = _mission_path(mission_id)
-    return f"Mission started.\nID: {mission_id}\nOutput: {out_dir}"
+
+    _missions_dir()
+    prev_cwd = os.getcwd()
+    os.chdir(_CRESSIDA_ROOT)
+    try:
+        exit_code = await _run_mission(args)
+        status = "completed" if exit_code == 0 else "failed"
+        print(f"[CRESSIDA] Mission {mission_id} {status}.")
+    finally:
+        os.chdir(prev_cwd)
 
 
 @mcp.tool()
@@ -288,58 +331,34 @@ def resolve_escalation(mission_id: str, decision: str) -> str:
 
 
 @mcp.tool()
-def trigger_scheduled_mission(brief: str, schedule: str, name: str = "") -> str:
-    """Schedule a recurring Cressida mission.
-
-    The daemon must be running (`cressida daemon`) to pick this up.
-
-    Args:
-        brief:    What to build or do.
-        schedule: When to run — @daily | @weekly | @hourly | @monthly
-                  or an ISO datetime like "2026-07-01T09:00:00"
-        name:     Optional filename slug (auto-generated if omitted)
-
-    Returns:
-        Path to the scheduled mission file.
-    """
-    import re
-    scheduled_dir = _MISSIONS_DIR / "scheduled"
-    scheduled_dir.mkdir(parents=True, exist_ok=True)
-
-    slug = name or re.sub(r"[^\w]+", "-", brief[:40]).strip("-").lower()
-    ts = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
-    filename = f"{ts}-{slug}.yaml"
-
-    content = f"schedule: \"{schedule}\"\nbrief: |\n"
-    for line in brief.splitlines():
-        content += f"  {line}\n"
-
-    target = scheduled_dir / filename
-    target.write_text(content, encoding="utf-8")
-    return f"Scheduled mission written to: {target}"
-
-
-@mcp.tool()
 def cressida_status() -> str:
-    """Get the global Cressida daemon status — running tasks, stalled tasks, health.
+    """Get the current Cressida system status.
 
     Returns:
-        JSON from the status server, or a summary from the status file.
+        JSON with mission counts and system info.
     """
-    import urllib.request
-    # Try the live HTTP status server first
-    try:
-        with urllib.request.urlopen("http://localhost:7437/status", timeout=2) as r:
-            return r.read().decode()
-    except Exception:
-        pass
+    mdir = _missions_dir()
+    missions = []
+    for d in sorted(mdir.iterdir(), reverse=True):
+        if not d.is_dir() or d.name in ("inbox", "scheduled", "processed"):
+            continue
+        state = _load_execution_state(d.name)
+        tasks = state.get("tasks", {})
+        statuses = [t.get("status") for t in tasks.values()]
+        overall = (
+            "completed" if all(s == "completed" for s in statuses) and statuses
+            else "failed" if any(s == "failed" for s in statuses)
+            else "running" if any(s in ("in_progress", "pending") for s in statuses)
+            else "unknown"
+        )
+        missions.append({"id": d.name, "status": overall})
 
-    # Fall back to the status file
-    status_file = _MISSIONS_DIR / "status.json"
-    if status_file.exists():
-        return status_file.read_text(encoding="utf-8")
-
-    return json.dumps({"status": "daemon not running", "hint": "Start with: cressida daemon"})
+    return json.dumps({
+        "status": "operational",
+        "version": "0.1.0",
+        "total_missions": len(missions),
+        "recent_missions": missions[:10],
+    }, indent=2)
 
 
 # ── Obsidian tools ────────────────────────────────────────────────────────────
@@ -351,8 +370,7 @@ def _get_bridge():
     if bridge is None:
         raise RuntimeError(
             "Obsidian vault not configured. "
-            "Set CRESSIDA_OBSIDIAN_VAULT env var to your vault path, "
-            "or start the daemon with --obsidian-vault <path>."
+            "Set CRESSIDA_OBSIDIAN_VAULT env var to your vault path."
         )
     return bridge
 

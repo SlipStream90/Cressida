@@ -1,6 +1,14 @@
 from __future__ import annotations
 
-from .auto import detect_provider, PROVIDER_ANTHROPIC, PROVIDER_OPENAI, PROVIDER_GEMINI, PROVIDER_GROQ, PROVIDER_OLLAMA
+from .auto import (
+    detect_provider,
+    PROVIDER_ANTHROPIC,
+    PROVIDER_OPENAI,
+    PROVIDER_GEMINI,
+    PROVIDER_GROQ,
+    PROVIDER_OLLAMA,
+    PROVIDER_CLAUDE_CLI,
+)
 
 __all__ = [
     "detect_provider",
@@ -9,4 +17,5 @@ __all__ = [
     "PROVIDER_GEMINI",
     "PROVIDER_GROQ",
     "PROVIDER_OLLAMA",
+    "PROVIDER_CLAUDE_CLI",
 ]

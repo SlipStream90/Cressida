@@ -22,16 +22,23 @@ class PhaseEscalatedError(Exception):
 
 # ── Tool implementations ─────────────────────────────────────────────────────
 
+def _resolve_path(path: str, mission_id: str = "") -> Path:
+    """Resolve a path, preferring mission-local paths when mission_id is given."""
+    p = Path(path)
+    if mission_id and not p.is_absolute():
+        mission_path = Path("missions") / mission_id / path
+        if mission_path.exists():
+            return mission_path
+    return p
+
+
 def _read_file(path: str, mission_id: str = "") -> str:
-    candidates = [Path(path)]
-    if mission_id:
-        candidates.insert(0, Path("missions") / mission_id / path)
-    for p in candidates:
-        if p.exists() and p.is_file():
-            try:
-                return p.read_text(encoding="utf-8")
-            except Exception as exc:
-                return f"ERROR reading {p}: {exc}"
+    p = _resolve_path(path, mission_id)
+    if p.exists() and p.is_file():
+        try:
+            return p.read_text(encoding="utf-8")
+        except Exception as exc:
+            return f"ERROR reading {p}: {exc}"
     return f"File not found: {path}"
 
 
@@ -40,20 +47,17 @@ def _write_file(path: str, content: str, mission_id: str = "") -> str:
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
-        return f"Written {len(content)} chars to {p}"
+        return f"Written {len(content)} chars to {p.resolve()}"
     except Exception as exc:
         return f"ERROR writing {p}: {exc}"
 
 
 def _list_dir(path: str, mission_id: str = "") -> str:
-    candidates = [Path(path)]
-    if mission_id:
-        candidates.insert(0, Path("missions") / mission_id / path)
-    for p in candidates:
-        if p.exists() and p.is_dir():
-            entries = sorted(p.iterdir())
-            lines = [f"{'/' if e.is_dir() else ' '} {e.name}" for e in entries]
-            return f"{p}/\n" + "\n".join(lines)
+    p = _resolve_path(path, mission_id)
+    if p.exists() and p.is_dir():
+        entries = sorted(p.iterdir())
+        lines = [f"{'/' if e.is_dir() else ' '} {e.name}" for e in entries]
+        return f"{p}/\n" + "\n".join(lines)
     return f"Directory not found: {path}"
 
 

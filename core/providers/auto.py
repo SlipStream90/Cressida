@@ -8,10 +8,14 @@ Priority order (first match wins):
   3. OPENAI_API_KEY   + openai   package installed
   4. GEMINI_API_KEY or GOOGLE_API_KEY + google-generativeai installed
   5. GROQ_API_KEY     + openai   package installed (Groq uses OpenAI-compat)
-  6. Ollama server reachable at localhost:11434 (no API key needed)
+  6. `claude` CLI installed on PATH (no API key — uses the CLI's own login)
+  7. `opencode` CLI installed on PATH (no API key — uses OpenCode's auth)
+  8. Ollama server reachable at localhost:11434 (no API key needed)
 
 The CRESSIDA_PROVIDER env var (or --provider CLI flag) accepts:
-  anthropic | openai | gemini | groq | ollama
+  anthropic | openai | gemini | groq | ollama | claude_cli | opencode
+  (claude_cli also accepts the aliases: claude-cli, cli, claude)
+  (opencode also accepts the alias: oc)
 """
 
 import os
@@ -24,11 +28,13 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-PROVIDER_ANTHROPIC = "anthropic"
-PROVIDER_OPENAI    = "openai"
-PROVIDER_GEMINI    = "gemini"
-PROVIDER_GROQ      = "groq"
-PROVIDER_OLLAMA    = "ollama"
+PROVIDER_ANTHROPIC  = "anthropic"
+PROVIDER_OPENAI     = "openai"
+PROVIDER_GEMINI     = "gemini"
+PROVIDER_GROQ       = "groq"
+PROVIDER_OLLAMA     = "ollama"
+PROVIDER_CLAUDE_CLI = "claude_cli"
+PROVIDER_OPENCODE   = "opencode"
 
 _ALL_PROVIDERS = (
     PROVIDER_ANTHROPIC,
@@ -36,7 +42,15 @@ _ALL_PROVIDERS = (
     PROVIDER_GEMINI,
     PROVIDER_GROQ,
     PROVIDER_OLLAMA,
+    PROVIDER_CLAUDE_CLI,
+    PROVIDER_OPENCODE,
 )
+
+# Accepted aliases for the Claude CLI provider (normalised in detect_provider).
+_CLAUDE_CLI_ALIASES = {"claude_cli", "claude-cli", "claudecli", "cli", "claude"}
+
+# Accepted aliases for the OpenCode provider.
+_OPENCODE_ALIASES = {"opencode", "oc"}
 
 
 def detect_provider() -> str:
@@ -48,6 +62,10 @@ def detect_provider() -> str:
     # Explicit override always wins
     explicit = os.environ.get("CRESSIDA_PROVIDER", "").strip().lower()
     if explicit:
+        if explicit in _CLAUDE_CLI_ALIASES:
+            return PROVIDER_CLAUDE_CLI
+        if explicit in _OPENCODE_ALIASES:
+            return PROVIDER_OPENCODE
         if explicit not in _ALL_PROVIDERS:
             raise ValueError(
                 f"Unknown CRESSIDA_PROVIDER={explicit!r}. "
@@ -71,6 +89,15 @@ def detect_provider() -> str:
     if os.environ.get("GROQ_API_KEY") and _pkg("openai"):
         return PROVIDER_GROQ
 
+    # Claude CLI (no API key — uses the CLI's own login). Preferred over OpenCode
+    # and Ollama when the `claude` binary is installed and no API key was found above.
+    if _claude_cli_available():
+        return PROVIDER_CLAUDE_CLI
+
+    # OpenCode (no API key — uses OpenCode's own auth). Preferred over Ollama.
+    if _opencode_available():
+        return PROVIDER_OPENCODE
+
     # Ollama (local, no API key, no Python SDK needed)
     if _ollama_reachable():
         return PROVIDER_OLLAMA
@@ -81,6 +108,8 @@ def detect_provider() -> str:
         "  OPENAI_API_KEY     (+ pip install openai)\n"
         "  GEMINI_API_KEY     (+ pip install google-generativeai)\n"
         "  GROQ_API_KEY       (+ pip install openai)\n"
+        "  Or install the Claude CLI (https://claude.com/claude-code) — no API key needed.\n"
+        "  Or install OpenCode (https://opencode.ai) — no API key needed.\n"
         "  Or start Ollama locally (https://ollama.com) — no API key needed.\n"
         "  Or set CRESSIDA_PROVIDER explicitly to one of: "
         + ", ".join(_ALL_PROVIDERS)
@@ -95,8 +124,15 @@ def create_agent(
     max_tokens: int = 8192,
     ollama_model: str = "llama3.2",
     ollama_host: str = "http://localhost:11434",
+    timeout: float = 0,
 ) -> Agent:
     """Instantiate the correct agent class for the given provider and role."""
+    # Normalise aliases passed directly (env-var path already does this).
+    if provider in _CLAUDE_CLI_ALIASES:
+        provider = PROVIDER_CLAUDE_CLI
+    if provider in _OPENCODE_ALIASES:
+        provider = PROVIDER_OPENCODE
+
     if provider == PROVIDER_ANTHROPIC:
         from cressida.core.llm_agent import LLMAgent
         return LLMAgent(role=role, agents_dir=agents_dir, cressida_root=cressida_root, max_tokens=max_tokens)
@@ -124,6 +160,26 @@ def create_agent(
             max_tokens=max_tokens,
         )
 
+    if provider == PROVIDER_CLAUDE_CLI:
+        from cressida.core.providers.claude_cli_agent import ClaudeCLIAgent
+        return ClaudeCLIAgent(
+            role=role,
+            agents_dir=agents_dir,
+            cressida_root=cressida_root,
+            max_tokens=max_tokens,
+            timeout=timeout if timeout > 0 else None,
+        )
+
+    if provider == PROVIDER_OPENCODE:
+        from cressida.core.providers.opencode_agent import OpenCodeAgent
+        return OpenCodeAgent(
+            role=role,
+            agents_dir=agents_dir,
+            cressida_root=cressida_root,
+            max_tokens=max_tokens,
+            timeout=timeout if timeout > 0 else None,
+        )
+
     raise ValueError(f"Unknown provider: {provider!r}")
 
 
@@ -142,3 +198,15 @@ def _ollama_reachable(host: str = "http://localhost:11434", timeout: float = 1.0
         return True
     except Exception:
         return False
+
+
+def _claude_cli_available() -> bool:
+    """Return True if the `claude` CLI binary is installed and locatable."""
+    from cressida.core.providers.claude_cli_agent import claude_cli_path
+    return claude_cli_path() is not None
+
+
+def _opencode_available() -> bool:
+    """Return True if the `opencode` CLI binary is installed and locatable."""
+    from cressida.core.providers.opencode_agent import opencode_cli_path
+    return opencode_cli_path() is not None

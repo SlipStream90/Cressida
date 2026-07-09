@@ -14,11 +14,13 @@ def create_all_agents(
     provider: str = "auto",
     ollama_model: str = "llama3.2",
     ollama_host: str = "http://localhost:11434",
+    timeout: float = 0,
 ) -> None:
     """Instantiate one agent per AgentRole and register it.
 
-    provider: one of 'auto' | 'anthropic' | 'openai' | 'gemini' | 'groq' | 'ollama'
+    provider: one of 'auto' | 'anthropic' | 'openai' | 'gemini' | 'groq' | 'ollama' | 'claude_cli' | 'opencode'
               'auto' probes environment variables and installed packages in order.
+    timeout: per-agent task timeout in seconds (0 = use provider default).
 
     Already-registered roles are skipped, so calling multiple times is safe.
     """
@@ -32,7 +34,7 @@ def create_all_agents(
     for role in AgentRole:
         if registry.is_registered(role):
             continue
-        agent = create_agent(
+        kwargs = dict(
             role=role,
             provider=resolved,
             agents_dir=agents_path,
@@ -41,4 +43,7 @@ def create_all_agents(
             ollama_model=ollama_model,
             ollama_host=ollama_host,
         )
+        if timeout > 0:
+            kwargs["timeout"] = timeout
+        agent = create_agent(**kwargs)
         registry.register(agent)

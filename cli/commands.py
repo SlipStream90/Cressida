@@ -23,9 +23,9 @@ def _build_mission_state(
     brief: str,
     default_priority: Priority = Priority.CRITICAL,
 ) -> MissionState:
-    """Build a standard MissionState DAG: research → product → architecture → planning.
+    """Build a standard MissionState DAG: research -> product -> architecture -> planning -> implementation -> review.
 
-    Exposed here so the autonomy watcher can reuse the same mission shape without
+    Exposed here so other modules can reuse the same mission shape without
     duplicating the task setup logic.
     """
     state = MissionState(mission_id=mission_id, brief=brief, status=MissionStatus.PENDING)
@@ -102,6 +102,45 @@ def _build_mission_state(
             "writes": [f"missions/{mission_id}/backlog.json"],
         },
     ))
+    state.add_task(Task(
+        id="implementation",
+        name="Implementation",
+        description=(
+            "Implement the code based on the PRD, architecture, and backlog. "
+            "Write all source files, tests, and configuration files as specified. "
+            "Use the write_file tool to create each file."
+        ),
+        agent=AgentRole.BRANCH,
+        priority=default_priority,
+        depends_on=["planning"],
+        metadata={
+            "reads": [
+                f"missions/{mission_id}/intelligence/PRD.md",
+                f"missions/{mission_id}/ARCHITECTURE.md",
+                f"missions/{mission_id}/backlog.json",
+            ],
+            "writes": [f"missions/{mission_id}/implementation/"],
+        },
+    ))
+    state.add_task(Task(
+        id="review",
+        name="Code review",
+        description=(
+            "Review the implemented code for quality, correctness, and adherence "
+            "to the architecture. Run tests if available. Provide a review report."
+        ),
+        agent=AgentRole.REVIEW,
+        priority=default_priority,
+        depends_on=["implementation"],
+        metadata={
+            "reads": [
+                f"missions/{mission_id}/implementation/",
+                f"missions/{mission_id}/intelligence/PRD.md",
+                f"missions/{mission_id}/ARCHITECTURE.md",
+            ],
+            "writes": [f"missions/{mission_id}/review_report.md"],
+        },
+    ))
     return state
 
 
@@ -112,7 +151,7 @@ async def run_mission(args: argparse.Namespace) -> int:
     else:
         brief = args.brief
 
-    mission_id = args.mission_id or f"mission_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    mission_id = getattr(args, "mission_id", None) or f"mission_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
     event_bus = EventBus()
     registry = AgentRegistry()
@@ -121,6 +160,7 @@ async def run_mission(args: argparse.Namespace) -> int:
         provider=getattr(args, "provider", "auto"),
         ollama_model=getattr(args, "ollama_model", "llama3.2"),
         ollama_host=getattr(args, "ollama_host", "http://localhost:11434"),
+        timeout=getattr(args, "timeout", 0),
     )
 
     state = _build_mission_state(mission_id, brief)
@@ -184,100 +224,6 @@ async def export_rewards(args: argparse.Namespace) -> int:
     store = RewardStore()
     path = store.export_jsonl(args.output)
     print(f"Reward records exported to: {path}")
-    return 0
-
-
-async def start_daemon(args: argparse.Namespace) -> int:
-    """Layer 4+5: Start the autonomous CRESSIDA daemon.
-
-    Runs three concurrent services:
-      - MissionWatcher: polls inbox + scheduled directories
-      - StallMonitor:   detects stalled tasks via EventBus history
-      - StatusServer:   writes missions/status.json + optional HTTP endpoint
-    """
-    from cressida.autonomy.watcher import MissionWatcher
-    from cressida.autonomy.monitor import StallMonitor, StatusServer
-    from cressida.autonomy.postmortem import PostMortemAnalyzer
-    from cressida.memory.strategic import StrategicMemory
-
-    event_bus = EventBus()
-    registry = AgentRegistry()
-    memory = MemorySystem()
-    registry.register_default(
-        agents_dir=getattr(args, "agents_dir", "agents"),
-        cressida_root=getattr(args, "root", "."),
-        provider=getattr(args, "provider", "auto"),
-        ollama_model=getattr(args, "ollama_model", "llama3.2"),
-        ollama_host=getattr(args, "ollama_host", "http://localhost:11434"),
-    )
-
-    stall_mem = StrategicMemory()
-    watcher = MissionWatcher(
-        registry=registry,
-        event_bus=event_bus,
-        memory=memory,
-        inbox_dir=getattr(args, "inbox", "missions/inbox"),
-        scheduled_dir=getattr(args, "scheduled", "missions/scheduled"),
-        poll_interval=getattr(args, "poll", 10.0),
-    )
-    monitor = StallMonitor(
-        event_bus=event_bus,
-        memory=stall_mem,
-        stall_threshold=getattr(args, "stall_threshold", 1800.0),
-    )
-    status = StatusServer(
-        event_bus=event_bus,
-        port=getattr(args, "status_port", 7437),
-    )
-    # Post-mortem analyzer wires itself to the event bus on construction
-    PostMortemAnalyzer(event_bus=event_bus, registry=registry, memory=stall_mem)
-
-    # Obsidian bridge (optional — only if vault is configured)
-    obsidian_tasks = []
-    obsidian_vault = getattr(args, "obsidian_vault", "") or os.environ.get("CRESSIDA_OBSIDIAN_VAULT", "")
-    if obsidian_vault:
-        try:
-            from cressida.obsidian.bridge import init_bridge
-            bridge = init_bridge(
-                vault_path=obsidian_vault,
-                cressida_folder=getattr(args, "obsidian_folder", "Cressida"),
-                poll_interval=getattr(args, "obsidian_poll", 15.0),
-            )
-            missions_base = Path(getattr(args, "root", ".")) / "cressida" / "missions"
-            knowledge_base = Path(getattr(args, "root", ".")) / "cressida" / "knowledge"
-            bridge.subscribe_to_events(event_bus, missions_base, knowledge_base)
-
-            async def _handle_vault_brief(brief: str, meta: dict) -> None:
-                import argparse as _ap
-                _args = _ap.Namespace(
-                    brief=brief,
-                    provider=meta.get("provider", getattr(args, "provider", "auto")),
-                    ollama_model=getattr(args, "ollama_model", "llama3.2"),
-                    ollama_host=getattr(args, "ollama_host", "http://localhost:11434"),
-                    priority=meta.get("priority", "medium"),
-                )
-                await run_mission(_args)
-
-            obsidian_tasks.append(bridge.watch_inbox(_handle_vault_brief))
-            print(f"  Obsidian:  {obsidian_vault}")
-        except Exception as exc:
-            print(f"  Obsidian:  not connected ({exc})")
-
-    print("CRESSIDA daemon started.")
-    print(f"  Inbox:     {getattr(args, 'inbox', 'missions/inbox')}")
-    print(f"  Scheduled: {getattr(args, 'scheduled', 'missions/scheduled')}")
-    print(f"  Status:    http://localhost:{getattr(args, 'status_port', 7437)}/status")
-    print("Press Ctrl+C to stop.\n")
-
-    try:
-        await asyncio.gather(
-            watcher.run(),
-            monitor.run(),
-            status.run(),
-            *obsidian_tasks,
-        )
-    except KeyboardInterrupt:
-        print("\nDaemon stopped.")
     return 0
 
 

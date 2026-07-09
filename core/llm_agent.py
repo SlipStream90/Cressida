@@ -190,6 +190,8 @@ class LLMAgent(Agent):
         for write_path in writes:
             resolved = write_path.replace("<mission_id>", mission_id)
             p = Path(resolved)
+            if not p.is_absolute():
+                p = Path.cwd() / p
             if p.suffix:
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_text(content, encoding="utf-8")

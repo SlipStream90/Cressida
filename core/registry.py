@@ -51,10 +51,12 @@ class AgentRegistry:
         provider: str = "auto",
         ollama_model: str = "llama3.2",
         ollama_host: str = "http://localhost:11434",
+        timeout: float = 0,
     ) -> None:
         """Register one LLM agent per AgentRole using the specified (or auto-detected) provider.
 
-        provider: 'auto' | 'anthropic' | 'openai' | 'gemini' | 'groq' | 'ollama'
+        provider: 'auto' | 'anthropic' | 'openai' | 'gemini' | 'groq' | 'ollama' | 'claude_cli' | 'opencode'
+        timeout: per-agent task timeout in seconds (0 = use provider default).
         Delegates to AgentFactory — the registry stays decoupled from LLM details.
         Safe to call multiple times — already-registered roles are skipped.
         """
@@ -66,4 +68,5 @@ class AgentRegistry:
             provider=provider,
             ollama_model=ollama_model,
             ollama_host=ollama_host,
+            timeout=timeout,
         )
