@@ -38,7 +38,7 @@ desktop.ini
 *.key
 
 # Mission runtime output (generated, not source)
-missions/MSN-*/
+missions/*/
 missions/inbox/
 missions/scheduled/
 missions/status.json
