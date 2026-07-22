@@ -12,7 +12,7 @@ except ImportError:
 
 from cressida.core.interfaces import Agent
 from cressida.core import AgentRole, MissionState, Task
-from cressida.core.tools.definitions import get_tools_for_role
+from cressida.core.tools.definitions import get_tools_for_role, select_tools_for_task
 from cressida.core.tools.implementations import execute_tool, PhaseRejectedError, PhaseEscalatedError
 from cressida.orchestration.context_builder import ContextBuilder
 
@@ -106,13 +106,18 @@ class LLMAgent(Agent):
             objectives=state.objectives if state.objectives else None,
         )
 
-        tools = get_tools_for_role(self.role)
+        # M (the dispatcher) may have pruned the toolset for this task to cut
+        # token usage; select_tools_for_task honours that annotation and falls
+        # open to the role's full toolset when none is declared.
+        tools = select_tools_for_task(self.role, task.metadata)
+        # A task can also be right-sized to a cheaper model via M's model_hint.
+        model = task.metadata.get("model_hint") or self._model
         messages: list[dict[str, Any]] = [{"role": "user", "content": user_prompt}]
         rounds = 0
 
         while rounds < _MAX_TOOL_ROUNDS:
             kwargs: dict[str, Any] = {
-                "model": self._model,
+                "model": model,
                 "max_tokens": self._max_tokens,
                 "system": system_prompt,
                 "messages": messages,

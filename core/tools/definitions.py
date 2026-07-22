@@ -192,6 +192,9 @@ _ESCALATE: dict[str, Any] = {
 _BASE: list[dict[str, Any]] = [_READ_FILE, _WRITE_FILE, _LIST_DIR]
 
 _ROLE_TOOLS: dict[str, list[dict[str, Any]]] = {
+    # M reads the brief/backlog and past plans, then commissions the mission.
+    # It does not implement or run shells — read + memory is all it needs.
+    "M":            [_READ_FILE, _LIST_DIR, _QUERY_MEMORY],
     "BOND":         _BASE + [_APPROVE_PHASE, _REJECT_PHASE, _ESCALATE],
     "INTELLIGENCE": _BASE + [_WEB_SEARCH, _QUERY_MEMORY],
     "Q":            _BASE,
@@ -203,6 +206,47 @@ _ROLE_TOOLS: dict[str, list[dict[str, Any]]] = {
     "REVIEW":       _BASE + [_RUN_SHELL],
 }
 
+# Lookup by tool name — used by the dispatcher to expose a pruned toolset.
+_TOOL_BY_NAME: dict[str, dict[str, Any]] = {
+    t["name"]: t
+    for t in (
+        _READ_FILE, _WRITE_FILE, _LIST_DIR, _WEB_SEARCH, _RUN_SHELL,
+        _QUERY_MEMORY, _APPROVE_PHASE, _REJECT_PHASE, _ESCALATE,
+    )
+}
+
 
 def get_tools_for_role(role: AgentRole) -> list[dict[str, Any]]:
     return list(_ROLE_TOOLS.get(role.value, _BASE))
+
+
+def get_tool_names_for_role(role: AgentRole) -> list[str]:
+    """Names of every tool a role *could* use (the un-pruned superset)."""
+    return [t["name"] for t in _ROLE_TOOLS.get(role.value, _BASE)]
+
+
+def select_tools_for_task(role: AgentRole, task_metadata: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Return the tool schemas to actually expose for a task.
+
+    Token-reduction lever: when M (the dispatcher) has annotated the task with a
+    pruned ``toolset`` list in ``task.metadata``, only those tools are sent to the
+    model — every unused tool schema we drop is input tokens saved on *every*
+    round of the agentic loop.
+
+    Falls open: if no ``toolset`` is declared, or a declared name is unknown, the
+    role's full toolset is returned so behaviour is never worse than before.
+    """
+    full = get_tools_for_role(role)
+    if not task_metadata:
+        return full
+    wanted = task_metadata.get("toolset")
+    if not wanted:
+        return full
+    allowed = {t["name"] for t in full}
+    pruned = [
+        _TOOL_BY_NAME[name]
+        for name in wanted
+        if name in allowed and name in _TOOL_BY_NAME
+    ]
+    # Never starve an agent — if pruning left nothing usable, fall back to full.
+    return pruned or full

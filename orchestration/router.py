@@ -8,6 +8,10 @@ class RoutingError(Exception):
 
 
 TASK_TYPE_ROUTE: dict[str, AgentRole] = {
+    "commission": AgentRole.M,
+    "dispatch": AgentRole.M,
+    "orchestrate": AgentRole.M,
+    "agent_selection": AgentRole.M,
     "research": AgentRole.INTELLIGENCE,
     "research_report": AgentRole.INTELLIGENCE,
     "product_definition": AgentRole.INTELLIGENCE,

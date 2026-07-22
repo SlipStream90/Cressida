@@ -13,6 +13,7 @@ from cressida.memory.system import MemorySystem
 from cressida.state.shared_state import SharedState
 
 from .dependency_graph import CyclicDependencyError, DependencyGraph
+from .dispatcher import Dispatcher
 from .executor import TaskExecutor
 from .router import TaskRouter
 from .scheduler import Scheduler
@@ -33,6 +34,7 @@ class Coordinator:
         self._event_bus = event_bus
         self._memory = memory
         self._router = TaskRouter()
+        self._dispatcher = Dispatcher(self._router)
         self._executor = TaskExecutor(registry, self._router, event_bus)
         self._graph = DependencyGraph()
         self._scheduler = Scheduler(self._graph)
@@ -44,6 +46,11 @@ class Coordinator:
         )
 
         try:
+            # M commissions the mission first: prune agents/tools/skills per task
+            # (annotates task.metadata) so downstream agents run lean. Recording
+            # the plan is best-effort and never blocks execution.
+            self._commission_mission(state)
+
             self._build_graph(state)
             schedule = self._scheduler.compute_schedule()
             self._memory.strategic.record_decision(
@@ -78,6 +85,74 @@ class Coordinator:
             )
 
         return state
+
+    def _commission_mission(self, state: MissionState) -> None:
+        """Run M's dispatcher, annotate tasks, and record the plan (best-effort)."""
+        try:
+            plan = self._dispatcher.commission(state, annotate=True)
+        except Exception as e:  # never let commissioning block a mission
+            print(f"[coordinator] commission skipped: {e}")
+            return
+
+        savings = self._dispatcher.estimate_savings(plan)
+
+        # 1) Strategic memory — durable, queryable record of the plan.
+        try:
+            self._memory.strategic.record_decision(
+                decision_id=f"commission_{state.mission_id}",
+                title="M commission plan",
+                description=(
+                    f"Activated {len(plan.activated_agents)} agents; "
+                    f"dropped {savings['tool_schemas_dropped']} tool schemas "
+                    f"({savings['tool_schemas_exposed']} exposed)."
+                ),
+                alternatives=["commission all agents with full toolsets"],
+                chosen="selective_commission",
+                rationale="Minimise token usage by activating only required agents/tools.",
+                author="M",
+                tags=["commission", "dispatch", state.mission_id],
+            )
+        except Exception as e:
+            print(f"[coordinator] commission memory write failed: {e}")
+
+        # 2) Obsidian — store the plan as a subnode under the Logs branch.
+        try:
+            from cressida.obsidian.bridge import get_bridge
+
+            bridge = get_bridge()
+            if bridge is not None:
+                body = self._render_commission_note(plan, savings)
+                bridge.store_subnode(
+                    branch="logs",
+                    title=f"Commission — {state.mission_id}",
+                    content=body,
+                    tags=["commission", "dispatch"],
+                    metadata={"mission_id": state.mission_id, "agent": "M"},
+                )
+        except Exception as e:
+            print(f"[coordinator] commission obsidian write failed: {e}")
+
+    @staticmethod
+    def _render_commission_note(plan: Any, savings: dict[str, int]) -> str:
+        lines = [
+            f"# Commission Plan — {plan.mission_id}",
+            "",
+            f"**Activated agents:** {', '.join(a.value for a in plan.activated_agents)}",
+            f"**Tool schemas exposed:** {savings['tool_schemas_exposed']}  ",
+            f"**Tool schemas dropped:** {savings['tool_schemas_dropped']}  ",
+            f"**Agents activated / available:** {savings['agents_activated']} / {savings['agents_available']}",
+            "",
+            "## Per-task commission",
+            "",
+            "| Task | Agent | Tools | Skills | Model | Skip |",
+            "| --- | --- | --- | --- | --- | --- |",
+        ]
+        for c in plan.per_task:
+            lines.append(
+                f"| {c.task_id} | {c.agent.value} | {', '.join(c.tools) or '—'} | "
+                f"{', '.join(c.skills) or '—'} | {c.model or 'default'} | {'yes' if c.skip else 'no'} |"
+            )
+        return "\n".join(lines)
 
     def _build_graph(self, state: MissionState) -> None:
         for task_id, task in state.tasks.items():

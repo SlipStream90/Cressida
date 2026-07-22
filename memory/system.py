@@ -38,6 +38,53 @@ class MemorySystem:
         ]
         resolved.write_text("\n".join(record), encoding="utf-8")
 
+        # Mirror into Obsidian as a subnode under the appropriate main branch, so
+        # every stored memory joins the knowledge graph. Best-effort: a missing
+        # or misconfigured vault must never break a local memory write.
+        self._mirror_subnode(path, content, metadata)
+
+    def _mirror_subnode(
+        self,
+        path: str | Path,
+        content: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        try:
+            from cressida.obsidian.bridge import get_bridge
+
+            bridge = get_bridge()
+            if bridge is None:
+                return
+            branch = metadata.get("branch") or self._infer_branch(str(path), metadata)
+            title = metadata.get("title") or Path(str(path)).stem
+            if metadata.get("mission_id") and title:
+                title = f"{metadata['mission_id']} — {title}"
+            bridge.store_subnode(
+                branch=branch,
+                title=title,
+                content=content,
+                tags=list(metadata.get("tags", [])),
+                metadata=metadata,
+            )
+        except Exception:
+            # Silent by design — memory persistence already succeeded on disk.
+            pass
+
+    @staticmethod
+    def _infer_branch(path: str, metadata: dict[str, Any]) -> str:
+        haystack = f"{path} {' '.join(str(t) for t in metadata.get('tags', []))}".lower()
+        if "postmortem" in haystack or "post-mortem" in haystack:
+            return "postmortems"
+        if "escalat" in haystack:
+            return "escalations"
+        if "decision" in haystack or "adr" in haystack:
+            return "decisions"
+        if "log" in haystack:
+            return "logs"
+        if any(k in haystack for k in ("lesson", "pattern", "knowledge", "learn")):
+            return "knowledge"
+        return "mission"
+
     def query(
         self,
         task_type: str = "",

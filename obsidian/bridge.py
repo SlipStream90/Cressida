@@ -78,6 +78,13 @@ def _parse_frontmatter(text: str) -> tuple[dict, str]:
         return {}, text
 
 
+def _sanitize_filename(title: str) -> str:
+    """Make a title safe to use as an Obsidian note filename (no path chars)."""
+    cleaned = re.sub(r'[\\/:*?"<>|#^\[\]]', "-", title).strip().strip(".")
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned[:120] or "untitled"
+
+
 def _render_note(frontmatter: dict[str, Any], body: str) -> str:
     """Render a note with YAML frontmatter."""
     if not _YAML_AVAILABLE:
@@ -173,9 +180,115 @@ class ObsidianBridge:
     def bond_dir(self) -> Path:
         return self._root() / "BOND Decisions"
 
+    # Main knowledge-graph branches. Every stored memory lands as a *subnode*
+    # under one of these, linked back to the branch's Map-of-Content (MOC) note
+    # so Obsidian's graph view renders branch → subnode trees.
+    BRANCHES: dict[str, str] = {
+        "knowledge":    "Knowledge",
+        "mission":      "Mission Memory",
+        "logs":         "Logs",
+        "decisions":    "Decisions",
+        "escalations":  "Escalations",
+        "postmortems":  "Post-Mortems",
+    }
+
+    def branch_dir(self, branch: str) -> Path:
+        """Folder for a main branch. Unknown keys fall under a 'Misc' branch."""
+        folder = self.BRANCHES.get(branch.lower().strip(), branch.strip() or "Misc")
+        return self._root() / folder
+
+    def _branch_moc_path(self, branch: str) -> Path:
+        """The Map-of-Content index note that sits at the root of a branch."""
+        d = self.branch_dir(branch)
+        folder = d.name
+        return d / f"{folder}.md"
+
     def _ensure_structure(self) -> None:
         for d in (self.inbox_dir(), self.missions_dir(), self.knowledge_dir(), self.bond_dir()):
             d.mkdir(parents=True, exist_ok=True)
+        self._ensure_branches()
+
+    def _ensure_branches(self) -> None:
+        """Create each main branch folder and its MOC index note if missing."""
+        for key, folder in self.BRANCHES.items():
+            (self._root() / folder).mkdir(parents=True, exist_ok=True)
+            moc = self._branch_moc_path(key)
+            if not moc.exists():
+                fm = {
+                    "created": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "node_type": "branch",
+                    "tags": ["cressida", "moc", "branch", key],
+                }
+                body = (
+                    f"# {folder}\n\n"
+                    f"Main knowledge branch. Every {folder.lower()} memory is stored "
+                    f"as a subnode below and linked here.\n\n"
+                    f"## Subnodes\n"
+                )
+                moc.write_text(_render_note(fm, body), encoding="utf-8")
+
+    # ── Subnode memory storage ────────────────────────────────────────────────
+
+    def store_subnode(
+        self,
+        branch: str,
+        title: str,
+        content: str,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> Path:
+        """Store a memory as a subnode under a main branch and link it from the MOC.
+
+        This is the single chokepoint for *all* memory that should live in the
+        Obsidian graph — knowledge, mission memory, logs, decisions, etc. The
+        subnode carries an ``up: "[[<Branch>]]"`` link and the branch MOC gains a
+        ``[[<subnode>]]`` backlink, so the vault graph shows a branch → subnodes
+        tree.
+
+        Returns the path to the written subnode note.
+        """
+        self._ensure_branches()
+        folder = self.branch_dir(branch)
+        folder.mkdir(parents=True, exist_ok=True)
+
+        branch_folder = folder.name
+        safe_title = _sanitize_filename(title)
+
+        fm: dict[str, Any] = {
+            "created": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "node_type": "subnode",
+            "branch": branch_folder,
+            "up": f"[[{branch_folder}]]",
+            "tags": ["cressida", "subnode", branch.lower().strip()] + (tags or []),
+        }
+        meta = metadata or {}
+        for k in ("mission_id", "agent", "task_id"):
+            if meta.get(k):
+                fm[k] = meta[k]
+
+        # Body opens with an explicit link up to the branch so the edge exists
+        # even for readers that ignore frontmatter.
+        body = f"Up: [[{branch_folder}]]\n\n{content}"
+        path = folder / f"{safe_title}.md"
+        path.write_text(_render_note(fm, body), encoding="utf-8")
+
+        self._register_in_moc(branch, safe_title)
+        return path
+
+    def _register_in_moc(self, branch: str, subnode_title: str) -> None:
+        """Add an idempotent ``[[subnode]]`` backlink under the branch MOC."""
+        moc = self._branch_moc_path(branch)
+        if not moc.exists():
+            self._ensure_branches()
+        text = moc.read_text(encoding="utf-8", errors="replace")
+        link = f"- [[{subnode_title}]]"
+        if link in text:
+            return  # already registered
+        if "## Subnodes" in text:
+            text = text.rstrip() + f"\n{link}\n"
+        else:
+            text = text.rstrip() + f"\n\n## Subnodes\n{link}\n"
+        moc.write_text(text, encoding="utf-8")
 
     # ── Writing artifacts to vault ────────────────────────────────────────────
 

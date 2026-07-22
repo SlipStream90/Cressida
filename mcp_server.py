@@ -524,6 +524,53 @@ def obsidian_write(note_path: str, content: str, tags: str = "") -> str:
 
 
 @mcp.tool()
+def obsidian_store_memory(
+    branch: str,
+    title: str,
+    content: str,
+    tags: str = "",
+    mission_id: str = "",
+    agent: str = "",
+) -> str:
+    """Store a memory as a subnode under a main branch in your Obsidian vault.
+
+    This is the canonical way to persist CRESSIDA memory into the knowledge
+    graph. The note is written under the branch folder and linked from that
+    branch's Map-of-Content note, so Obsidian's graph view shows a
+    branch → subnode tree.
+
+    Args:
+        branch:     Main branch to file under. One of:
+                    knowledge | mission | logs | decisions | escalations | postmortems
+                    (any other value creates/uses a branch of that name).
+        title:      Human-readable title for the subnode (becomes the note name).
+        content:    Markdown body of the memory.
+        tags:       Comma-separated extra tags (optional).
+        mission_id: Owning mission id, if any (optional).
+        agent:      Authoring agent, if any (optional).
+
+    Returns:
+        Confirmation with the subnode path and the branch it was linked under.
+    """
+    bridge = _get_bridge()
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+    meta = {}
+    if mission_id:
+        meta["mission_id"] = mission_id
+    if agent:
+        meta["agent"] = agent
+    path = bridge.store_subnode(
+        branch=branch,
+        title=title,
+        content=content,
+        tags=tag_list,
+        metadata=meta,
+    )
+    branch_folder = bridge.BRANCHES.get(branch.lower().strip(), branch.strip() or "Misc")
+    return f"Stored subnode under [[{branch_folder}]]: {path}"
+
+
+@mcp.tool()
 def obsidian_list(subfolder: str = "") -> str:
     """List all notes in the Obsidian vault (or a subfolder).
 
