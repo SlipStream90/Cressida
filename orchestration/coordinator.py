@@ -12,6 +12,8 @@ from cressida.core.types import AgentRole, MissionState, MissionStatus, Task, Ta
 from cressida.memory.system import MemorySystem
 from cressida.state.shared_state import SharedState
 
+from cressida.learning import Curator, PlaybookStore, ReflectionEngine, SkillSynthesizer
+
 from .dependency_graph import CyclicDependencyError, DependencyGraph
 from .dispatcher import Dispatcher
 from .executor import TaskExecutor
@@ -38,6 +40,19 @@ class Coordinator:
         self._executor = TaskExecutor(registry, self._router, event_bus)
         self._graph = DependencyGraph()
         self._scheduler = Scheduler(self._graph)
+
+        # Learning layer (agent R): reflection distils lessons into per-agent
+        # playbooks after every mission; the curator keeps them consolidated.
+        # Anchor to the package dir (…/cressida/) so the write side lines up with
+        # the ContextBuilder read side, which resolves knowledge/ relative to it.
+        pkg_dir = Path(__file__).parent.parent  # …/cressida/orchestration/ -> …/cressida/
+        self._playbooks = PlaybookStore(pkg_dir / "knowledge" / "playbooks")
+        self._reflection = ReflectionEngine(
+            playbooks=self._playbooks,
+            evaluations_path=pkg_dir / "evaluations",
+        )
+        self._skills = SkillSynthesizer(pkg_dir / "knowledge" / "skills")
+        self._curator = Curator(playbooks=self._playbooks, skills=self._skills)
 
     async def run_mission(self, state: MissionState, shared: SharedState | None = None) -> MissionState:
         state.status = MissionStatus.IN_PROGRESS
@@ -216,7 +231,28 @@ class Coordinator:
                 Event(type=EventType.MISSION_COMPLETED, data={"mission_id": state.mission_id}, source="coordinator")
             )
 
+        # Close the learning loop: distil this mission's experience into agent
+        # playbooks, mint/refresh skills, and consolidate. Best-effort — never
+        # allowed to affect the mission's outcome.
+        self._learn_from_mission(state)
+
         self._persist_state(state)
+
+    def _learn_from_mission(self, state: MissionState) -> None:
+        """Run reflection + skill synthesis + consolidation after a mission."""
+        try:
+            insights = self._reflection.reflect_on_mission(
+                state,
+                strategic_memory=self._memory.strategic,
+            )
+            skills = self._skills.synthesize_from_mission(state)
+            self._curator.consolidate_all(decay=False)
+            print(
+                f"[learning] mission {state.mission_id}: "
+                f"{len(insights)} lesson(s), {len(skills)} skill(s) touched."
+            )
+        except Exception as e:  # learning must never break a mission
+            print(f"[coordinator] learning skipped: {e}")
 
     def _persist_state(self, state: MissionState) -> None:
         """Write execution_state.json so MCP status tools can read it."""

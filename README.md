@@ -11,6 +11,7 @@ CRESSIDA takes a plain-English brief and runs a full software engineering pipeli
 | Agent | Role |
 |---|---|
 | **M** | Mission commissioner and dispatcher. Runs first on every mission and decides *who* runs it — activating only the agents a task needs and handing each a pruned toolset, relevant skills, and a right-sized model. This is the token-efficiency layer. |
+| **R** | Records and learning curator. Runs *after* every mission and distils what happened into per-agent playbooks and reusable skills, then consolidates them. Those lessons are injected back into agents' future prompts — this is the self-improvement layer. |
 | **BOND** | Mission director and autonomous gate. Reviews architecture before planning proceeds; can reject a plan or escalate to a human. |
 | **INTELLIGENCE** | Research and product definition. Produces market research, PRDs, and roadmaps. |
 | **Q** | Specification writer. Converts the PRD into an engineering spec and test strategy. |
@@ -37,6 +38,31 @@ Before any agent is invoked, **M** commissions the mission. The `Coordinator` ru
 The commission is written back onto each `Task.metadata` (`toolset`, `skills`, `model_hint`, `skip`), so `LLMAgent` picks it up automatically — `select_tools_for_task()` sends only the pruned tools, and it **fails open** (full toolset) whenever a selection is uncertain, so a commission never blocks a mission.
 
 Each plan is recorded to strategic memory and stored as a subnode under the **Logs** branch in Obsidian, alongside an estimate of the tool schemas and agents it avoided activating.
+
+---
+
+## Learning & self-improvement (R)
+
+Inspired by Nous Research's [Hermes](https://github.com/nousresearch/hermes-agent) agent, CRESSIDA runs a **closed learning loop** so the team gets better over missions instead of starting cold every time. Where M runs *before* a mission to make it cheap, **R** runs *after* it to make the next one smarter.
+
+At mission finalization the `Coordinator` invokes R's learning layer (`learning/`):
+
+1. **Reflect** — the `ReflectionEngine` reads task outcomes, review scores, execution times, and feedback from the reward store. Unlike the failure-only post-mortem analyser, it learns from **successes** too.
+2. **Distil** — signals become short, reusable lessons attributed to the specific agent that should learn them: **heuristics** (do this), **patterns** (reliable approaches), and **cautions** (`[AVOID]` — known pitfalls).
+3. **Reinforce, don't duplicate** — a repeated lesson bumps an existing entry's score and hit-count; lessons that stop being reinforced **decay**.
+4. **Synthesize skills** — a task type completed successfully for the first time becomes a reusable **skill** (a procedure note under `knowledge/skills/`). Recurrence self-improves it; a later failure flags it `needs_review`.
+5. **Consolidate** — the `Curator` merges duplicates and prunes each playbook to a bounded top-N, so injected knowledge stays sharp and **token-cheap**.
+
+The loop closes in the `ContextBuilder`: every prompt for a role now carries a **`## Learned Playbook`** section with that agent's highest-ranked lessons. An agent's own accumulated experience shapes its future behaviour — the mechanism by which CRESSIDA actually *learns*.
+
+Playbooks live at `knowledge/playbooks/<role>.json` (with a rendered `.md` mirror) and each reflection is mirrored as a subnode under the **Knowledge** branch in Obsidian. Inspect the state any time:
+
+```
+learning_playbook(role="BRANCH")   # MCP tool — a role's top lessons
+learning_nudge()                   # digest of strongest lessons + synthesised skills
+```
+
+Everything is best-effort: with no LLM key, no reward records, or no vault, reflection still records what it can from task outcomes and never affects a mission's result.
 
 ---
 
@@ -154,10 +180,11 @@ cressida/
 │   ├── llm_agent.py         # Anthropic agentic loop
 │   ├── providers/           # OpenAI / Gemini / Groq / Ollama agents + auto-detect
 │   ├── tools/               # Tool definitions and implementations
-│   └── agent_factory.py     # Instantiates all 10 agents for a given provider
+│   └── agent_factory.py     # Instantiates all 11 agents for a given provider
 ├── evaluation/      # Scoring, reward store, feedback collector
+├── learning/        # Self-improvement loop (R): playbooks, reflection, skills, curator
 ├── obsidian/        # Obsidian bridge: bidirectional vault sync, inbox watcher
-├── knowledge/       # Persistent lessons and architectural decisions
+├── knowledge/       # Persistent lessons, playbooks, and synthesised skills
 ├── memory/          # Strategic, mission, and agent memory layers
 ├── missions/        # Output directory — one folder per mission
 │   ├── inbox/       # Drop YAML here to trigger a mission
@@ -288,6 +315,7 @@ The daemon polls the inbox every 15 seconds (configurable), picks up the note, l
 | Post-mortem | Lessons and patterns → `Knowledge/` and `Post-Mortems/` subnodes |
 | Any memory write | Subnode filed under its main branch, linked from the branch MOC |
 | Mission commissioned | M's commission plan → `Logs/` subnode |
+| Mission reflected on | R's distilled lessons → `Knowledge/` subnode |
 
 Agents can also search the vault during research — INTELLIGENCE queries vault notes alongside Cressida's internal strategic memory.
 

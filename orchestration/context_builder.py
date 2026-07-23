@@ -32,6 +32,17 @@ class ContextBuilder:
         if spec:
             sections.append(f"## Agent Specification\n{spec}")
 
+        # Learned playbook: this agent's own accumulated experience from past
+        # missions, injected so behaviour improves over time (Hermes-style loop).
+        # Best-effort and bounded — a missing learning layer never breaks a prompt.
+        playbook = self._read_playbook(agent_role)
+        if playbook:
+            sections.append(
+                f"## Learned Playbook — {agent_role.value}\n"
+                "Lessons you have accumulated from past missions. Apply the relevant "
+                "ones; treat [AVOID] items as known pitfalls.\n\n" + playbook
+            )
+
         for path in reads:
             content = self._resolve_read(path, mission_id)
             if content:
@@ -48,6 +59,16 @@ class ContextBuilder:
         if path.exists():
             return path.read_text(encoding="utf-8")
         return None
+
+    def _read_playbook(self, role: AgentRole) -> str | None:
+        try:
+            from cressida.learning.playbook import PlaybookStore
+
+            store = PlaybookStore(self._root / "knowledge" / "playbooks")
+            rendered = store.render_for_prompt(role.value)
+            return rendered or None
+        except Exception:
+            return None
 
     def _resolve_read(self, read_path: str, mission_id: str) -> str | None:
         resolved = read_path.replace("<mission_id>", mission_id)

@@ -8,6 +8,7 @@ from typing import Any
 
 class AgentRole(enum.StrEnum):
     M = "M"
+    R = "R"
     BOND = "BOND"
     INTELLIGENCE = "INTELLIGENCE"
     Q = "Q"

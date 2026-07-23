@@ -571,6 +571,44 @@ def obsidian_store_memory(
 
 
 @mcp.tool()
+def learning_playbook(role: str = "", limit: int = 12) -> str:
+    """Show CRESSIDA's learned playbooks — the accumulated experience agent R
+    distils from past missions and injects into agents' future prompts.
+
+    Args:
+        role:  Agent role to show (e.g. BRANCH, TANNER, REVIEW). Leave empty for
+               a one-line summary of every role's playbook size.
+        limit: Max lessons to show for a specific role.
+
+    Returns:
+        The role's top-ranked lessons, or a cross-role summary.
+    """
+    from cressida.learning.playbook import PlaybookStore
+
+    store = PlaybookStore(_CRESSIDA_PACKAGE / "knowledge" / "playbooks")
+    if not role:
+        summary = store.summary()
+        if not summary:
+            return "No playbooks yet — run a mission to start the learning loop."
+        return "\n".join(f"{r.upper()}: {n} lesson(s)" for r, n in summary.items())
+    rendered = store.render_for_prompt(role, limit=limit)
+    return rendered or f"No playbook recorded for {role.upper()} yet."
+
+
+@mcp.tool()
+def learning_nudge() -> str:
+    """Return the learning 'nudge' digest — the strongest current lessons across
+    all agents plus the reusable skills the framework has synthesised. This is a
+    read-only snapshot of how CRESSIDA has improved itself so far.
+    """
+    from cressida.learning import Curator, PlaybookStore, SkillSynthesizer
+
+    playbooks = PlaybookStore(_CRESSIDA_PACKAGE / "knowledge" / "playbooks")
+    skills = SkillSynthesizer(_CRESSIDA_PACKAGE / "knowledge" / "skills")
+    return Curator(playbooks=playbooks, skills=skills).nudge()
+
+
+@mcp.tool()
 def obsidian_list(subfolder: str = "") -> str:
     """List all notes in the Obsidian vault (or a subfolder).
 
