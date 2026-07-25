@@ -12,21 +12,23 @@ CRESSIDA takes a plain-English brief and runs a full software engineering pipeli
 
 ```bash
 # macOS / Linux / WSL / Git-Bash
-curl -fsSL https://raw.githubusercontent.com/SlipStream90/Cressida/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/SlipStream90/Cressida/MI6/install.sh | bash
 ```
 
 ```powershell
 # Windows PowerShell
-irm https://raw.githubusercontent.com/SlipStream90/Cressida/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/SlipStream90/Cressida/MI6/install.ps1 | iex
 ```
 
 Either script clones the repo to `~/.cressida`, builds an **isolated virtualenv**, installs CRESSIDA, and registers the MCP server with Claude Code — then restart the client and call `cressida_status`. Add a provider with `CRESSIDA_PROVIDER=anthropic` before running, or stay keyless via the Claude Code / opencode CLI. Re-run any time to update. *(Requires the repo to be public and `git` + Python 3.11+ installed.)*
 
-**Homebrew** (macOS/Linux) is supported via a tap once a release is cut — see [`packaging/homebrew/cressida.rb`](packaging/homebrew/cressida.rb):
+**Homebrew** (macOS/Linux):
 
 ```bash
 brew tap SlipStream90/cressida && brew install cressida
 ```
+
+Taps from [`SlipStream90/homebrew-cressida`](https://github.com/SlipStream90/homebrew-cressida), installing the [`v0.1.0`](https://github.com/SlipStream90/Cressida/releases/tag/v0.1.0) release into an isolated venv (`cressida` and `cressida-mcp` land on your `PATH`). Run `brew info cressida` after install for the exact MCP registration command. Formula source: [`packaging/homebrew/cressida.rb`](packaging/homebrew/cressida.rb).
 
 ### Manual: clone and bootstrap
 

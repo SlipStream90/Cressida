@@ -8,13 +8,13 @@
 #
 # Overridable via env vars:
 #   CRESSIDA_REPO      git URL           (default: the public GitHub repo)
-#   CRESSIDA_BRANCH    branch/tag        (default: main)
+#   CRESSIDA_BRANCH    branch/tag        (default: the repo's default branch)
 #   CRESSIDA_HOME      install dir       (default: ~/.cressida)
 #   CRESSIDA_PROVIDER  provider extra    (anthropic|openai|gemini|groq|all; default: none)
 set -euo pipefail
 
 REPO="${CRESSIDA_REPO:-https://github.com/SlipStream90/Cressida.git}"
-BRANCH="${CRESSIDA_BRANCH:-main}"
+BRANCH="${CRESSIDA_BRANCH:-}"   # empty = follow the remote's default branch
 HOME_DIR="${CRESSIDA_HOME:-$HOME/.cressida}"
 PROVIDER="${CRESSIDA_PROVIDER:-}"
 SRC="$HOME_DIR/src"
@@ -39,11 +39,23 @@ done
 
 mkdir -p "$HOME_DIR"
 if [ -d "$SRC/.git" ]; then
-  c "Updating checkout at $SRC"
-  git -C "$SRC" fetch --depth 1 origin "$BRANCH" && git -C "$SRC" checkout -q "$BRANCH" && git -C "$SRC" reset -q --hard "origin/$BRANCH"
+  if [ -n "$BRANCH" ]; then
+    c "Updating checkout at $SRC ($BRANCH)"
+    git -C "$SRC" fetch --depth 1 origin "$BRANCH"
+    git -C "$SRC" checkout -q "$BRANCH"
+    git -C "$SRC" reset -q --hard "origin/$BRANCH"
+  else
+    c "Updating checkout at $SRC"
+    git -C "$SRC" fetch --depth 1 origin
+    git -C "$SRC" reset -q --hard FETCH_HEAD
+  fi
 else
-  c "Cloning $REPO ($BRANCH)"
-  git clone --branch "$BRANCH" --depth 1 "$REPO" "$SRC"
+  c "Cloning $REPO${BRANCH:+ ($BRANCH)}"
+  if [ -n "$BRANCH" ]; then
+    git clone --branch "$BRANCH" --depth 1 "$REPO" "$SRC"
+  else
+    git clone --depth 1 "$REPO" "$SRC"   # follows the remote's default branch
+  fi
 fi
 
 c "Creating virtualenv at $VENV"
