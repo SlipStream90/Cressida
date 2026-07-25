@@ -650,6 +650,11 @@ def obsidian_sync_mission(mission_id: str) -> str:
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
-if __name__ == "__main__":
+def main() -> None:
+    """Console-script entry point (`cressida-mcp`) and `python -m` target."""
     _ensure_monitor_started()
     mcp.run()
+
+
+if __name__ == "__main__":
+    main()

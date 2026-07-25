@@ -8,7 +8,29 @@ CRESSIDA takes a plain-English brief and runs a full software engineering pipeli
 
 ## Onboarding (clone → install → use)
 
-Cloned the repo and want to drive CRESSIDA from Claude Code (or any MCP client)? Three steps.
+### Fastest: one-line install
+
+```bash
+# macOS / Linux / WSL / Git-Bash
+curl -fsSL https://raw.githubusercontent.com/SlipStream90/Cressida/main/install.sh | bash
+```
+
+```powershell
+# Windows PowerShell
+irm https://raw.githubusercontent.com/SlipStream90/Cressida/main/install.ps1 | iex
+```
+
+Either script clones the repo to `~/.cressida`, builds an **isolated virtualenv**, installs CRESSIDA, and registers the MCP server with Claude Code — then restart the client and call `cressida_status`. Add a provider with `CRESSIDA_PROVIDER=anthropic` before running, or stay keyless via the Claude Code / opencode CLI. Re-run any time to update. *(Requires the repo to be public and `git` + Python 3.11+ installed.)*
+
+**Homebrew** (macOS/Linux) is supported via a tap once a release is cut — see [`packaging/homebrew/cressida.rb`](packaging/homebrew/cressida.rb):
+
+```bash
+brew tap SlipStream90/cressida && brew install cressida
+```
+
+### Manual: clone and bootstrap
+
+Prefer to see each step? Three of them.
 
 ```bash
 # 1. Clone
@@ -252,6 +274,9 @@ cressida/
 ├── state/           # MissionState, AgentState, SharedState
 ├── mcp_server.py    # MCP server — exposes missions/status/learning as tools
 ├── onboard.py       # One-command collaborator setup (install + MCP wiring)
+├── install.sh       # curl | bash installer (macOS/Linux/WSL)
+├── install.ps1      # irm | iex installer (Windows)
+├── packaging/       # Homebrew formula (tap) and other distribution files
 ├── pyproject.toml   # Packaging — makes the clone `pip install -e .`-able
 └── cressida.yaml    # Configuration
 ```

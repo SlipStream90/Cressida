@@ -28,6 +28,7 @@ all = ["anthropic", "openai", "google-genai", "groq"]
 
 [project.scripts]
 cressida = "cressida.cli:main"
+cressida-mcp = "cressida.mcp_server:main"
 
 # The repository root *is* the `cressida` package (its root holds __init__.py),
 # so map the package name onto "." and list the subpackages explicitly. This
