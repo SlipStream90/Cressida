@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cressida"
+version = "0.1.0"
+description = "CRESSIDA - Autonomous Multi-Agent Software Engineering Intelligence Framework"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=1.2",         # MCP server (python -m cressida.mcp_server)
+    "aiohttp",          # async LLM/http calls + status server
+    "pydantic>=2",
+    "pyyaml",           # daemon scheduler + inbox YAML briefs
+    "rich",
+    "click",
+]
+
+# LLM providers are optional — install the one you have a key for.
+# (`pip install -e ".[anthropic]"`, or `.[all]` for everything.)
+[project.optional-dependencies]
+anthropic = ["anthropic"]
+openai = ["openai"]
+gemini = ["google-genai"]
+groq = ["groq"]
+all = ["anthropic", "openai", "google-genai", "groq"]
+
+[project.scripts]
+cressida = "cressida.cli:main"
+
+# The repository root *is* the `cressida` package (its root holds __init__.py),
+# so map the package name onto "." and list the subpackages explicitly. This
+# makes `pip install -e .` work no matter what folder the repo is cloned into.
+[tool.setuptools]
+package-dir = { "cressida" = "." }
+packages = [
+    "cressida",
+    "cressida.autonomy",
+    "cressida.cli",
+    "cressida.core",
+    "cressida.core.providers",
+    "cressida.core.tools",
+    "cressida.evaluation",
+    "cressida.learning",
+    "cressida.memory",
+    "cressida.obsidian",
+    "cressida.orchestration",
+    "cressida.state",
+]

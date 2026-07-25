@@ -6,6 +6,42 @@ CRESSIDA takes a plain-English brief and runs a full software engineering pipeli
 
 ---
 
+## Onboarding (clone → install → use)
+
+Cloned the repo and want to drive CRESSIDA from Claude Code (or any MCP client)? Three steps.
+
+```bash
+# 1. Clone
+git clone git@github.com:SlipStream90/Cressida.git cressida
+cd cressida
+
+# 2. (recommended) isolate in a virtual environment
+python -m venv .venv
+# Windows:        .venv\Scripts\activate
+# macOS / Linux:  source .venv/bin/activate
+
+# 3. Bootstrap: installs CRESSIDA + wires up the MCP server
+python onboard.py --provider anthropic
+```
+
+`onboard.py` verifies your Python (3.11+), runs `pip install -e .` so `python -m cressida.mcp_server` works from any directory, and prints the exact MCP-server config **pinned to your interpreter**. Pass `--register` to add it to Claude Code automatically (needs the `claude` CLI); otherwise copy the printed command:
+
+```bash
+claude mcp add-json cressida '{"command":"/path/to/python","args":["-m","cressida.mcp_server"]}' --scope user
+```
+
+Or paste the block it prints into `~/.claude.json` (or your client's `mcpServers`), then restart the client. Set a provider key and you're live:
+
+```bash
+export ANTHROPIC_API_KEY=sk-...          # or OPENAI_API_KEY / GEMINI_API_KEY / GROQ_API_KEY
+```
+
+Verify inside Claude Code by calling the `cressida_status` tool, then kick off work with `run_mission(brief="Build a todo REST API with PostgreSQL")`. Everything else — CLI (`cressida run`), the daemon, and Obsidian sync — is documented below.
+
+> **Prefer to do it by hand?** `pip install -e ".[anthropic]"` then add the MCP server yourself. The key detail: launch it with the **same Python** you installed into (use that interpreter's absolute path in `command`), because `python -m cressida.mcp_server` must resolve the installed `cressida` package.
+
+---
+
 ## Agents
 
 | Agent | Role |
@@ -89,11 +125,13 @@ cressida run brief.md --provider groq   # CLI flag
 
 ## Installation
 
+The one-liner is `python onboard.py` (see [Onboarding](#onboarding-clone--install--use)). To install manually from the repo root:
+
 ```bash
-pip install anthropic            # or openai / google-genai / groq
-pip install pyyaml               # required for the daemon scheduler
-pip install -e ./cressida        # install the framework
+pip install -e ".[anthropic]"    # framework + a provider (or .[openai] / .[gemini] / .[groq] / .[all])
 ```
+
+`pyyaml`, `aiohttp`, and `mcp` come in automatically as core dependencies (needed for the daemon scheduler and the MCP server).
 
 Optional (for web search in INTELLIGENCE):
 
@@ -191,6 +229,9 @@ cressida/
 │   └── scheduled/   # Cron/datetime scheduled missions
 ├── orchestration/   # Coordinator, dispatcher (M), scheduler, dependency graph, executor, context builder
 ├── state/           # MissionState, AgentState, SharedState
+├── mcp_server.py    # MCP server — exposes missions/status/learning as tools
+├── onboard.py       # One-command collaborator setup (install + MCP wiring)
+├── pyproject.toml   # Packaging — makes the clone `pip install -e .`-able
 └── cressida.yaml    # Configuration
 ```
 
