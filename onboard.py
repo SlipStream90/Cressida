@@ -93,9 +93,9 @@ def main() -> int:
         print(json.dumps({"mcpServers": {"cressida": cfg}}, indent=2))
     print("=" * 68)
 
-    if not args.provider:
-        print("\nNext: install a provider SDK and set its key, e.g.")
-        print("  pip install anthropic   &&   export ANTHROPIC_API_KEY=sk-...")
+    print("\nNo API key required if you already have the Claude Code or opencode")
+    print("CLI installed & logged in — CRESSIDA runs missions through it. Otherwise")
+    print("set a provider key, e.g.  export ANTHROPIC_API_KEY=sk-...  (or use Ollama).")
     print("Then in Claude Code:  run_mission(brief=\"Build a todo REST API\")")
     return 0
 

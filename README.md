@@ -30,7 +30,18 @@ python onboard.py --provider anthropic
 claude mcp add-json cressida '{"command":"/path/to/python","args":["-m","cressida.mcp_server"]}' --scope user
 ```
 
-Or paste the block it prints into `~/.claude.json` (or your client's `mcpServers`), then restart the client. Set a provider key and you're live:
+Or paste the block it prints into `~/.claude.json` (or your client's `mcpServers`), then restart the client.
+
+**No API key required.** If you already have the **Claude Code** or **opencode** CLI installed and logged in, CRESSIDA auto-detects it and runs missions through that CLI's own session — no provider key, no billing setup. Auto-detection order is: any provider key you've set → `claude` CLI → `opencode` CLI → local Ollama. So the keyless paths are:
+
+```bash
+# already logged into Claude Code or opencode? nothing to set — it just works.
+cressida run brief.md --provider claude_cli    # force the Claude CLI
+cressida run brief.md --provider opencode       # force opencode
+cressida run brief.md --provider ollama         # local models, also keyless
+```
+
+Prefer a hosted key instead? Set one and it takes priority:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-...          # or OPENAI_API_KEY / GEMINI_API_KEY / GROQ_API_KEY
@@ -112,7 +123,11 @@ CRESSIDA is not tied to any single LLM. Set whichever API key you have and it au
 | OpenAI | gpt-4o / gpt-4o-mini | `OPENAI_API_KEY` |
 | Google Gemini | gemini-1.5-pro / gemini-1.5-flash | `GEMINI_API_KEY` |
 | Groq | llama-3.3-70b-versatile / llama-3.1-8b-instant | `GROQ_API_KEY` |
-| Ollama | any local model (default: llama3.2) | Ollama running at localhost:11434 |
+| **Claude Code CLI** | whatever your `claude` login provides | **nothing — no API key**, just `claude` installed & logged in |
+| **opencode CLI** | whatever your opencode auth provides | **nothing — no API key**, just `opencode` installed & logged in |
+| Ollama | any local model (default: llama3.2) | Ollama running at localhost:11434 (no key) |
+
+If no key is set, CRESSIDA falls back to the `claude` CLI, then `opencode`, then Ollama — so a machine that already runs Claude Code or opencode needs no extra credentials.
 
 Override detection at any time:
 
