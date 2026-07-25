@@ -49,6 +49,8 @@ export ANTHROPIC_API_KEY=sk-...          # or OPENAI_API_KEY / GEMINI_API_KEY / 
 
 Verify inside Claude Code by calling the `cressida_status` tool, then kick off work with `run_mission(brief="Build a todo REST API with PostgreSQL")`. Everything else — CLI (`cressida run`), the daemon, and Obsidian sync — is documented below.
 
+**Obsidian is optional.** Nothing in onboarding requires it. If `CRESSIDA_OBSIDIAN_VAULT` is unset, the vault bridge simply no-ops — missions, the M dispatcher, and the R learning loop all run normally, and memory/lessons/playbooks still persist to local JSON/Markdown under `memory/` and `knowledge/`. Set the vault later only if you want the graph mirror.
+
 > **Prefer to do it by hand?** `pip install -e ".[anthropic]"` then add the MCP server yourself. The key detail: launch it with the **same Python** you installed into (use that interpreter's absolute path in `command`), because `python -m cressida.mcp_server` must resolve the installed `cressida` package.
 
 ---
