@@ -26,6 +26,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("status", help="Show system status")
 
+    daemon_parser = subparsers.add_parser("daemon", help="Run unattended: watch inbox/scheduled dirs and fire missions")
+    daemon_parser.add_argument("--provider", type=str, default="auto", help=_PROVIDER_HELP)
+    daemon_parser.add_argument("--ollama-model", type=str, default="llama3.2", help="Ollama model name (used when provider=ollama)")
+    daemon_parser.add_argument("--ollama-host", type=str, default="http://localhost:11434", help="Ollama server URL")
+    daemon_parser.add_argument("--poll-interval", type=float, default=10.0, help="Seconds between inbox/scheduled polls (default: 10)")
+    daemon_parser.add_argument("--status-port", type=int, default=7437, help="Port for the status HTTP server (default: 7437)")
+    daemon_parser.add_argument("--timeout", type=float, default=0, help="Per-agent task timeout in seconds (0=provider default)")
+
     feedback_parser = subparsers.add_parser("feedback", help="Submit human feedback for a task")
     feedback_parser.add_argument("task_id", type=str, help="Task ID")
     feedback_parser.add_argument("score", type=float, help="Score (0-10)")
@@ -55,6 +63,10 @@ async def async_main() -> int:
     elif args.command == "status":
         from .commands import show_status
         return await show_status(args)
+
+    elif args.command == "daemon":
+        from .commands import run_daemon
+        return await run_daemon(args)
 
     elif args.command == "feedback":
         from .commands import submit_feedback

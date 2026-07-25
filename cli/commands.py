@@ -189,6 +189,64 @@ async def show_status(args: argparse.Namespace) -> int:
     return 0
 
 
+async def run_daemon(args: argparse.Namespace) -> int:
+    """Run CRESSIDA unattended: watch the inbox/scheduled dirs and fire missions.
+
+    Also starts the stall monitor and the status HTTP server. Runs until
+    interrupted (Ctrl-C).
+    """
+    from cressida.autonomy.monitor import StallMonitor, StatusServer
+    from cressida.autonomy.watcher import MissionWatcher
+
+    # Anchor mission dirs to the same location the coordinator and MCP server use
+    # (<package-parent>/missions), so daemon-fired missions show up where
+    # mission_status reads them — regardless of the daemon's working directory.
+    missions_dir = Path(__file__).parent.parent.parent / "missions"
+    inbox = missions_dir / "inbox"
+    scheduled = missions_dir / "scheduled"
+    status_file = missions_dir / "status.json"
+
+    event_bus = EventBus()
+    registry = AgentRegistry()
+    memory = MemorySystem()
+    registry.register_default(
+        provider=getattr(args, "provider", "auto"),
+        ollama_model=getattr(args, "ollama_model", "llama3.2"),
+        ollama_host=getattr(args, "ollama_host", "http://localhost:11434"),
+        timeout=getattr(args, "timeout", 0),
+    )
+
+    poll = getattr(args, "poll_interval", 10.0)
+    port = getattr(args, "status_port", 7437)
+
+    watcher = MissionWatcher(
+        registry, event_bus, memory,
+        inbox_dir=inbox, scheduled_dir=scheduled, poll_interval=poll,
+    )
+    monitor = StallMonitor(event_bus, memory=memory.strategic)
+    server = StatusServer(event_bus, port=port, status_file=status_file)
+
+    print("CRESSIDA daemon starting")
+    print(f"  inbox:      {inbox}")
+    print(f"  scheduled:  {scheduled}")
+    print(f"  status:     http://localhost:{port}/status")
+    print("  Ctrl-C to stop.")
+
+    tasks = [
+        asyncio.create_task(watcher.run()),
+        asyncio.create_task(monitor.run()),
+        asyncio.create_task(server.run()),
+    ]
+    try:
+        await asyncio.gather(*tasks)
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        print("\nCRESSIDA daemon stopping...")
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    return 0
+
+
 async def submit_feedback(args: argparse.Namespace) -> int:
     bus = EventBus()
     collector = FeedbackCollector(bus)

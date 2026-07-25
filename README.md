@@ -179,8 +179,12 @@ cressida run brief.md --provider ollama --ollama-model qwen2.5
 ### Run as a daemon (autonomous mode)
 
 ```bash
-cressida daemon --provider anthropic
+cressida daemon                       # keyless if Claude Code / opencode CLI is logged in
+cressida daemon --provider anthropic  # or pin a provider
+cressida daemon --poll-interval 5 --status-port 7437
 ```
+
+The daemon starts the mission watcher, the stall monitor, and the status server together, and prints the exact directories it watches on startup. It runs until Ctrl-C and uses the **same provider auto-detection** as `cressida run` — so no API key is needed if a CLI provider or Ollama is available.
 
 The daemon watches two directories:
 
