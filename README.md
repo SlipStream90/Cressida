@@ -7,7 +7,7 @@ CRESSIDA takes a plain-English brief and runs a full software engineering pipeli
 The pipeline:
 
 ```
-research ─┬─> methodology research (LEITER) ─┬─> architecture ─> BOND gate ─>
+research ─┬─> methodology research (LETTER) ─┬─> architecture ─> BOND gate ─>
           └─> product definition ────────────┘   planning ─> implementation ─> review
 ```
 
