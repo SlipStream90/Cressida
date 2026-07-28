@@ -44,7 +44,7 @@ from cressida.core.providers.base import ProviderAgentBase
 
 # Strategic roles get the strongest model; workers get the faster one.
 # These are OpenCode's default models when no model is specified.
-_STRATEGIC = {AgentRole.BOND, AgentRole.INTELLIGENCE, AgentRole.Q}
+_STRATEGIC = {AgentRole.BOND, AgentRole.INTELLIGENCE, AgentRole.LEITER, AgentRole.Q}
 _STRATEGIC_MODEL = ""  # Let OpenCode pick its default
 _WORKER_MODEL = ""     # Let OpenCode pick its default
 

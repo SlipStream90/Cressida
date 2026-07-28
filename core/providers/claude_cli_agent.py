@@ -52,7 +52,7 @@ from cressida.core.providers.base import ProviderAgentBase
 
 
 # Strategic roles get the strongest model; workers get the faster one.
-_STRATEGIC = {AgentRole.BOND, AgentRole.INTELLIGENCE, AgentRole.Q}
+_STRATEGIC = {AgentRole.BOND, AgentRole.INTELLIGENCE, AgentRole.LEITER, AgentRole.Q}
 _STRATEGIC_MODEL = "opus"
 _WORKER_MODEL = "sonnet"
 

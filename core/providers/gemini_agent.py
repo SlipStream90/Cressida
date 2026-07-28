@@ -9,8 +9,8 @@ Install:  pip install google-genai
 API key:  GEMINI_API_KEY or GOOGLE_API_KEY environment variable
 
 Model selection (configurable via _GEMINI_MODELS):
-  Strategic agents (BOND, INTELLIGENCE, Q): gemini-2.0-flash   (best balance)
-  Implementation agents:                    gemini-2.0-flash   (fast + capable)
+  Strategic agents (BOND, INTELLIGENCE, LEITER, Q): gemini-2.0-flash   (best balance)
+  Implementation agents:                           gemini-2.0-flash   (fast + capable)
 
 Override any model via the model_map constructor param.
 
@@ -40,7 +40,7 @@ from cressida.core.providers.tool_adapters import to_gemini_declarations
 
 # ── Model table ───────────────────────────────────────────────────────────────
 
-_STRATEGIC = {AgentRole.BOND, AgentRole.INTELLIGENCE, AgentRole.Q}
+_STRATEGIC = {AgentRole.BOND, AgentRole.INTELLIGENCE, AgentRole.LEITER, AgentRole.Q}
 
 _GEMINI_MODELS: dict[AgentRole, str] = {
     r: ("gemini-2.0-flash" if r in _STRATEGIC else "gemini-2.0-flash")

@@ -23,7 +23,14 @@ def _build_mission_state(
     brief: str,
     default_priority: Priority = Priority.CRITICAL,
 ) -> MissionState:
-    """Build a standard MissionState DAG: research -> product -> architecture -> planning -> implementation -> review.
+    """Build a standard MissionState DAG.
+
+        research ─┬─> methodology_research ─┬─> architecture -> bond gate ->
+                  └─> product_definition ───┘   planning -> implementation -> review
+
+    LEITER's methodology_research and INTELLIGENCE's product_definition run in the
+    same parallel batch: one establishes *how* the field builds this today, the
+    other *what* we are building. Q's architecture waits on both.
 
     Exposed here so other modules can reuse the same mission shape without
     duplicating the task setup logic.
@@ -36,6 +43,28 @@ def _build_mission_state(
         agent=AgentRole.INTELLIGENCE,
         priority=default_priority,
         metadata={"reads": [], "writes": [f"missions/{mission_id}/intelligence/research_report.md"]},
+    ))
+    state.add_task(Task(
+        id="methodology_research",
+        name="Methodology research",
+        description=(
+            "Search the open internet for the CURRENT state of the art for building this mission. "
+            "Read primary sources (official docs, changelogs, release notes, advisories) with fetch_url — "
+            "search snippets alone are not enough to cite a claim. Establish current versions and release "
+            "dates for every dependency, identify deprecated or superseded approaches and what replaced "
+            "them, extract the idiomatic patterns and project structure to follow, and record known "
+            "pitfalls. Cite every claim with a URL and date; label anything unverified as [UNVERIFIED]."
+        ),
+        agent=AgentRole.LEITER,
+        priority=default_priority,
+        depends_on=["research"],
+        metadata={
+            "reads": [f"missions/{mission_id}/intelligence/research_report.md"],
+            "writes": [
+                f"missions/{mission_id}/intelligence/methodology_brief.md",
+                f"missions/{mission_id}/intelligence/sources.md",
+            ],
+        },
     ))
     state.add_task(Task(
         id="product_definition",
@@ -55,14 +84,19 @@ def _build_mission_state(
     state.add_task(Task(
         id="architecture",
         name="Architecture design",
-        description="Design system architecture, API contracts, and data models",
+        description=(
+            "Design system architecture, API contracts, and data models. "
+            "Follow the methodology brief: use the versions, patterns, and project structure it "
+            "verified, and avoid the approaches it flags as deprecated."
+        ),
         agent=AgentRole.Q,
         priority=default_priority,
-        depends_on=["product_definition"],
+        depends_on=["product_definition", "methodology_research"],
         metadata={
             "reads": [
                 f"missions/{mission_id}/intelligence/PRD.md",
                 f"missions/{mission_id}/intelligence/Roadmap.md",
+                f"missions/{mission_id}/intelligence/methodology_brief.md",
             ],
             "writes": [f"missions/{mission_id}/ARCHITECTURE.md"],
         },
@@ -71,7 +105,9 @@ def _build_mission_state(
         id="bond_approve_plan",
         name="BOND: approve plan",
         description=(
-            "Review the research, PRD, and architecture artifacts. "
+            "Review the research, methodology brief, PRD, and architecture artifacts. "
+            "Check that the architecture actually follows the verified methodology and does not "
+            "rely on approaches the brief flags as deprecated or unverified. "
             "Use approve_phase to approve the plan or reject_phase to block it. "
             "Use escalate if confidence is below 0.7."
         ),
@@ -81,6 +117,7 @@ def _build_mission_state(
         metadata={
             "reads": [
                 f"missions/{mission_id}/intelligence/research_report.md",
+                f"missions/{mission_id}/intelligence/methodology_brief.md",
                 f"missions/{mission_id}/intelligence/PRD.md",
                 f"missions/{mission_id}/ARCHITECTURE.md",
             ],
@@ -108,6 +145,8 @@ def _build_mission_state(
         description=(
             "Implement the code based on the PRD, architecture, and backlog. "
             "Write all source files, tests, and configuration files as specified. "
+            "Use the versions, patterns, and idioms established in the methodology brief — "
+            "do not fall back on older patterns it marks as superseded. "
             "Use the write_file tool to create each file."
         ),
         agent=AgentRole.BRANCH,
@@ -116,6 +155,7 @@ def _build_mission_state(
         metadata={
             "reads": [
                 f"missions/{mission_id}/intelligence/PRD.md",
+                f"missions/{mission_id}/intelligence/methodology_brief.md",
                 f"missions/{mission_id}/ARCHITECTURE.md",
                 f"missions/{mission_id}/backlog.json",
             ],

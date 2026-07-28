@@ -41,6 +41,7 @@ _ROLE_CORE_TOOLS: dict[AgentRole, list[str]] = {
     AgentRole.M:            ["read_file", "list_dir", "query_memory"],
     AgentRole.BOND:         ["read_file", "approve_phase", "reject_phase", "escalate"],
     AgentRole.INTELLIGENCE: ["read_file", "web_search", "query_memory"],
+    AgentRole.LEITER:       ["read_file", "web_search", "fetch_url", "query_memory"],
     AgentRole.Q:            ["read_file", "list_dir"],
     AgentRole.TANNER:       ["read_file", "list_dir"],
     AgentRole.BRANCH:       ["read_file", "write_file", "run_shell"],
@@ -52,7 +53,7 @@ _ROLE_CORE_TOOLS: dict[AgentRole, list[str]] = {
 
 # Roles whose work never touches a shell — run_shell is pruned even if signalled.
 _NON_SHELL_ROLES = {
-    AgentRole.M, AgentRole.BOND, AgentRole.INTELLIGENCE,
+    AgentRole.M, AgentRole.BOND, AgentRole.INTELLIGENCE, AgentRole.LEITER,
     AgentRole.Q, AgentRole.TANNER, AgentRole.MONEYPENNY,
 }
 

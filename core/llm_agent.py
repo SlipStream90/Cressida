@@ -22,6 +22,7 @@ from cressida.orchestration.context_builder import ContextBuilder
 _ROLE_MODEL: dict[AgentRole, str] = {
     AgentRole.BOND:         "claude-opus-4-8",
     AgentRole.INTELLIGENCE: "claude-opus-4-8",
+    AgentRole.LEITER:       "claude-opus-4-8",
     AgentRole.Q:            "claude-opus-4-8",
     AgentRole.TANNER:       "claude-sonnet-4-6",
     AgentRole.BRANCH:       "claude-sonnet-4-6",

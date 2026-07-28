@@ -98,6 +98,56 @@ def _web_search(query: str, num_results: int = 5, mission_id: str = "") -> str:
         )
 
 
+def _fetch_url(url: str, max_chars: int = 12000, mission_id: str = "") -> str:
+    """Fetch a page and return its readable text. Stdlib-only, no extra deps."""
+    import html as _html
+    import re
+
+    if not url.lower().startswith(("http://", "https://")):
+        return f"Refusing to fetch non-http(s) URL: {url}"
+
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (compatible; CRESSIDA/0.1; +research)",
+                "Accept": "text/html,application/xhtml+xml,text/plain,application/json;q=0.9,*/*;q=0.5",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            content_type = resp.headers.get("Content-Type", "")
+            charset = resp.headers.get_content_charset() or "utf-8"
+            # Cap the download itself so a huge page can't blow up memory.
+            raw = resp.read(4_000_000)
+    except Exception as exc:
+        return f"ERROR fetching {url}: {exc}"
+
+    text = raw.decode(charset, errors="ignore")
+
+    if "html" in content_type.lower() or text.lstrip()[:100].lower().startswith(("<!doctype", "<html")):
+        # Drop non-content elements entirely, then strip remaining tags.
+        text = re.sub(r"(?is)<(script|style|noscript|svg|head)\b.*?</\1>", " ", text)
+        text = re.sub(r"(?is)<!--.*?-->", " ", text)
+        # Keep block boundaries as newlines so headings/lists stay readable.
+        text = re.sub(r"(?i)<(br|/p|/div|/li|/h[1-6]|/tr)\s*/?>", "\n", text)
+        text = re.sub(r"(?s)<[^>]+>", " ", text)
+        text = _html.unescape(text)
+
+    # Collapse whitespace without losing paragraph structure.
+    text = re.sub(r"[ \t\r\f\v]+", " ", text)
+    text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text)
+    text = "\n".join(line.strip() for line in text.split("\n")).strip()
+
+    if not text:
+        return f"Fetched {url} but extracted no readable text (content-type: {content_type})."
+
+    limit = max(500, min(int(max_chars), 50000))
+    truncated = len(text) > limit
+    body = text[:limit]
+    header = f"# Fetched: {url}\n(content-type: {content_type or 'unknown'}{', truncated' if truncated else ''})\n\n"
+    return header + body
+
+
 def _run_shell(command: str, cwd: str | None = None, timeout: int = 60, mission_id: str = "") -> str:
     try:
         proc = subprocess.run(
@@ -252,6 +302,7 @@ _IMPLEMENTATIONS: dict[str, Any] = {
     "write_file":   _write_file,
     "list_dir":     _list_dir,
     "web_search":   _web_search,
+    "fetch_url":    _fetch_url,
     "run_shell":    _run_shell,
     "query_memory": _query_memory,
     "approve_phase": _approve_phase,

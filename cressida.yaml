@@ -41,21 +41,25 @@ agents:
     anthropic:
       BOND:         "claude-opus-4-8"
       INTELLIGENCE: "claude-opus-4-8"
+      LEITER:       "claude-opus-4-8"
       Q:            "claude-opus-4-8"
       default:      "claude-sonnet-4-6"
     openai:
       BOND:         "gpt-4o"
       INTELLIGENCE: "gpt-4o"
+      LEITER:       "gpt-4o"
       Q:            "gpt-4o"
       default:      "gpt-4o-mini"
     gemini:
       BOND:         "gemini-1.5-pro"
       INTELLIGENCE: "gemini-1.5-pro"
+      LEITER:       "gemini-1.5-pro"
       Q:            "gemini-1.5-pro"
       default:      "gemini-1.5-flash"
     groq:
       BOND:         "llama-3.3-70b-versatile"
       INTELLIGENCE: "llama-3.3-70b-versatile"
+      LEITER:       "llama-3.3-70b-versatile"
       Q:            "llama-3.3-70b-versatile"
       default:      "llama-3.1-8b-instant"
     ollama:

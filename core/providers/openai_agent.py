@@ -37,7 +37,7 @@ from cressida.core.providers.tool_adapters import to_openai_list
 
 # ── Model tables ─────────────────────────────────────────────────────────────
 
-_STRATEGIC = {AgentRole.BOND, AgentRole.INTELLIGENCE, AgentRole.Q}
+_STRATEGIC = {AgentRole.BOND, AgentRole.INTELLIGENCE, AgentRole.LEITER, AgentRole.Q}
 
 _OPENAI_MODELS: dict[AgentRole, str] = {
     r: ("gpt-4o" if r in _STRATEGIC else "gpt-4o-mini")

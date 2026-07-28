@@ -87,6 +87,7 @@ Verify inside Claude Code by calling the `cressida_status` tool, then kick off w
 | **R** | Records and learning curator. Runs *after* every mission and distils what happened into per-agent playbooks and reusable skills, then consolidates them. Those lessons are injected back into agents' future prompts — this is the self-improvement layer. |
 | **BOND** | Mission director and autonomous gate. Reviews architecture before planning proceeds; can reject a plan or escalate to a human. |
 | **INTELLIGENCE** | Research and product definition. Produces market research, PRDs, and roadmaps. |
+| **LEITER** | External intelligence. As soon as the mission is drafted, goes out to the open internet and reads primary sources to establish how this is actually built *today* — current versions, idiomatic patterns, deprecated approaches, known pitfalls — and writes a cited methodology brief that Q's architecture and BRANCH's implementation are held to. |
 | **Q** | Specification writer. Converts the PRD into an engineering spec and test strategy. |
 | **TANNER** | Test engineer. Writes the full test suite before implementation begins. |
 | **BRANCH** | Backend implementation. APIs, services, database layer. |
@@ -95,7 +96,9 @@ Verify inside Claude Code by calling the `cressida_status` tool, then kick off w
 | **MONEYPENNY** | Documentation and project tracking. Keeps the mission dossier up to date. |
 | **REVIEW** | Code review and coverage audit. Final quality gate before mission close. |
 
-Tasks run in parallel wherever the dependency graph allows. BOND sits as a mandatory checkpoint between architecture and planning — if BOND rejects the plan, all downstream tasks are blocked.
+Tasks run in parallel wherever the dependency graph allows — LEITER's methodology research runs alongside INTELLIGENCE's product definition, and Q waits on both. BOND sits as a mandatory checkpoint between architecture and planning — if BOND rejects the plan, all downstream tasks are blocked.
+
+LEITER exists because a model's priors go stale. It is the one agent required to cite a fetched URL and date for every claim, and to mark anything it could not verify as `[UNVERIFIED]` — so the architecture is designed against the ecosystem as it is now, not as it was at training time. Web search uses `BRAVE_API_KEY` when set and falls back to DuckDuckGo; `fetch_url` reads the pages themselves.
 
 ---
 

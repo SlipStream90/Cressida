@@ -64,6 +64,26 @@ _WEB_SEARCH: dict[str, Any] = {
     },
 }
 
+_FETCH_URL: dict[str, Any] = {
+    "name": "fetch_url",
+    "description": (
+        "Fetch a web page and return its readable text content. Use this after web_search to read "
+        "primary sources — search snippets are not enough to cite a claim. HTML is stripped to text."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "url": {"type": "string", "description": "Absolute http(s) URL to fetch"},
+            "max_chars": {
+                "type": "integer",
+                "description": "Truncate the extracted text to this many characters (default 12000)",
+                "default": 12000,
+            },
+        },
+        "required": ["url"],
+    },
+}
+
 _RUN_SHELL: dict[str, Any] = {
     "name": "run_shell",
     "description": "Execute a shell command and return stdout + stderr. Use for running tests, linters, builds.",
@@ -197,6 +217,8 @@ _ROLE_TOOLS: dict[str, list[dict[str, Any]]] = {
     "M":            [_READ_FILE, _LIST_DIR, _QUERY_MEMORY],
     "BOND":         _BASE + [_APPROVE_PHASE, _REJECT_PHASE, _ESCALATE],
     "INTELLIGENCE": _BASE + [_WEB_SEARCH, _QUERY_MEMORY],
+    # LEITER lives on the open internet — search + fetch are its primary instruments.
+    "LEITER":       _BASE + [_WEB_SEARCH, _FETCH_URL, _QUERY_MEMORY],
     "Q":            _BASE,
     "TANNER":       _BASE,
     "BRANCH":       _BASE + [_RUN_SHELL],
@@ -210,7 +232,7 @@ _ROLE_TOOLS: dict[str, list[dict[str, Any]]] = {
 _TOOL_BY_NAME: dict[str, dict[str, Any]] = {
     t["name"]: t
     for t in (
-        _READ_FILE, _WRITE_FILE, _LIST_DIR, _WEB_SEARCH, _RUN_SHELL,
+        _READ_FILE, _WRITE_FILE, _LIST_DIR, _WEB_SEARCH, _FETCH_URL, _RUN_SHELL,
         _QUERY_MEMORY, _APPROVE_PHASE, _REJECT_PHASE, _ESCALATE,
     )
 }

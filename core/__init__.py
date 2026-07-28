@@ -11,6 +11,7 @@ class AgentRole(enum.StrEnum):
     R = "R"
     BOND = "BOND"
     INTELLIGENCE = "INTELLIGENCE"
+    LEITER = "LEITER"
     Q = "Q"
     TANNER = "TANNER"
     BRANCH = "BRANCH"

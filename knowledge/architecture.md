@@ -27,12 +27,15 @@ CRESSIDA is an autonomous multi-agent software engineering intelligence framewor
   └───┘
 ```
 
-## Agent Roster (8)
+## Agent Roster (12)
 
 | Agent | Role | Reports To |
 |---|---|---|
+| M | Mission Commissioning & Dispatch | CRESSIDA COMMAND |
+| R | Records, Learning & Curation | CRESSIDA COMMAND |
 | BOND | Director of Operations | CRESSIDA COMMAND |
 | INTELLIGENCE | Research & Product Strategy | BOND |
+| LEITER | External Intelligence & Methodology Research | BOND |
 | Q | Architecture | BOND |
 | TANNER | Planning & Dependency Graph | BOND |
 | BRANCH | Backend Engineering | BOND |

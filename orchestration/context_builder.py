@@ -28,6 +28,18 @@ class ContextBuilder:
         sections.append(f"## Task: {task_id}\n{task_description}")
         sections.append(f"## Agent: {agent_role.value}")
 
+        # The constitution governs *how* every agent works, so it is injected
+        # ahead of the role spec and outranks it. Best-effort: a missing file
+        # never breaks a prompt.
+        constitution = self._read_constitution()
+        if constitution:
+            sections.append(
+                "## Constitution — binding on all agents\n"
+                "These rules govern how you work and take precedence over your agent "
+                "spec and playbook. A resolved human escalation outranks them.\n\n"
+                + constitution
+            )
+
         spec = self._read_agent_spec(agent_role)
         if spec:
             sections.append(f"## Agent Specification\n{spec}")
@@ -53,6 +65,15 @@ class ContextBuilder:
         sections.append("## Output Requirements\nProduce the outputs specified in your agent spec. Write all artifacts to the mission directory.")
 
         return "\n\n---\n\n".join(sections)
+
+    def _read_constitution(self) -> str | None:
+        path = self._root / "agents" / "CONSTITUTION.md"
+        try:
+            if path.exists():
+                return path.read_text(encoding="utf-8")
+        except Exception:
+            return None
+        return None
 
     def _read_agent_spec(self, role: AgentRole) -> str | None:
         path = self._root / "agents" / f"{role.value.lower()}.md"

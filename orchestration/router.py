@@ -19,6 +19,20 @@ TASK_TYPE_ROUTE: dict[str, AgentRole] = {
     "consolidate": AgentRole.R,
     "curate": AgentRole.R,
     "self_improve": AgentRole.R,
+    # LEITER's keys are matched before INTELLIGENCE's because route() scans this
+    # map in insertion order using substring matching — the bare "research" key
+    # would otherwise swallow "methodology research" and friends.
+    # Space variants are listed alongside the snake_case task-type keys because
+    # route() also substring-matches against human-written task names.
+    "methodology_research": AgentRole.LEITER,
+    "methodology research": AgentRole.LEITER,
+    "methodology": AgentRole.LEITER,
+    "best_practices": AgentRole.LEITER,
+    "best practices": AgentRole.LEITER,
+    "state_of_the_art": AgentRole.LEITER,
+    "state of the art": AgentRole.LEITER,
+    "web_research": AgentRole.LEITER,
+    "web research": AgentRole.LEITER,
     "research": AgentRole.INTELLIGENCE,
     "research_report": AgentRole.INTELLIGENCE,
     "product_definition": AgentRole.INTELLIGENCE,
