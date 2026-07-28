@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from cressida.core.events import EventBus, EventType
+from cressida.core.paths import mission_dir, missions_root, project_dir
 from cressida.core.registry import AgentRegistry
 from cressida.core.types import AgentRole, MissionState, MissionStatus, Priority, Task, TaskStatus
 from cressida.evaluation.feedback_collector import FeedbackCollector
@@ -22,6 +23,7 @@ def _build_mission_state(
     mission_id: str,
     brief: str,
     default_priority: Priority = Priority.CRITICAL,
+    target_dir: str | Path | None = None,
 ) -> MissionState:
     """Build a standard MissionState DAG.
 
@@ -32,10 +34,19 @@ def _build_mission_state(
     same parallel batch: one establishes *how* the field builds this today, the
     other *what* we are building. Q's architecture waits on both.
 
+    ``target_dir`` is the project the mission acts on — where implementation code
+    is written. Mission *analysis* artifacts (research, PRD, architecture) always
+    stay under the mission directory; only implementation goes to the target. When
+    omitted it falls back to CRESSIDA_PROJECT_DIR, then the working directory, so
+    "run Cressida inside the project I'm working on" needs no configuration.
+
     Exposed here so other modules can reuse the same mission shape without
     duplicating the task setup logic.
     """
     state = MissionState(mission_id=mission_id, brief=brief, status=MissionStatus.PENDING)
+
+    target = Path(target_dir).expanduser().resolve() if target_dir else project_dir()
+    state.metadata["project_dir"] = str(target)
     state.add_task(Task(
         id="research",
         name="Research phase",
@@ -147,7 +158,8 @@ def _build_mission_state(
             "Write all source files, tests, and configuration files as specified. "
             "Use the versions, patterns, and idioms established in the methodology brief — "
             "do not fall back on older patterns it marks as superseded. "
-            "Use the write_file tool to create each file."
+            "Use the write_file tool to create each file. "
+            f"Write all source files under the target project directory: {target}"
         ),
         agent=AgentRole.BRANCH,
         priority=default_priority,
@@ -159,7 +171,11 @@ def _build_mission_state(
                 f"missions/{mission_id}/ARCHITECTURE.md",
                 f"missions/{mission_id}/backlog.json",
             ],
+            # The mission-local implementation notes stay here so REVIEW's reads
+            # keep working; actual source files go to the target project via
+            # write_file, which passes absolute paths through untouched.
             "writes": [f"missions/{mission_id}/implementation/"],
+            "project_dir": str(target),
         },
     ))
     state.add_task(Task(
@@ -203,13 +219,17 @@ async def run_mission(args: argparse.Namespace) -> int:
         timeout=getattr(args, "timeout", 0),
     )
 
-    state = _build_mission_state(mission_id, brief)
+    state = _build_mission_state(
+        mission_id, brief, target_dir=getattr(args, "project_dir", None)
+    )
 
     coordinator = Coordinator(registry, event_bus, memory)
     shared = SharedState()
     shared.mission = type(shared.mission)(mission_id=mission_id, brief=brief)
 
     print(f"Starting mission: {mission_id}")
+    print(f"  mission dir:    {mission_dir(mission_id)}")
+    print(f"  target project: {state.metadata.get('project_dir')}")
     result = await coordinator.run_mission(state, shared)
 
     print(f"Mission {mission_id}: {result.status}")
@@ -238,10 +258,10 @@ async def run_daemon(args: argparse.Namespace) -> int:
     from cressida.autonomy.monitor import StallMonitor, StatusServer
     from cressida.autonomy.watcher import MissionWatcher
 
-    # Anchor mission dirs to the same location the coordinator and MCP server use
-    # (<package-parent>/missions), so daemon-fired missions show up where
-    # mission_status reads them — regardless of the daemon's working directory.
-    missions_dir = Path(__file__).parent.parent.parent / "missions"
+    # Anchor mission dirs to the canonical location (see core/paths.py) so
+    # daemon-fired missions show up where mission_status reads them, regardless
+    # of the daemon's working directory.
+    missions_dir = missions_root()
     inbox = missions_dir / "inbox"
     scheduled = missions_dir / "scheduled"
     status_file = missions_dir / "status.json"
@@ -340,7 +360,7 @@ async def resolve_escalation(args: argparse.Namespace) -> int:
         "resolved_at": datetime.now().isoformat(),
         "resolved_by": "CRESSIDA COMMAND",
     }
-    path = Path("missions") / mission_id / "escalations" / "resolution.json"
+    path = mission_dir(mission_id) / "escalations" / "resolution.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_json.dumps(resolution, indent=2), encoding="utf-8")
     print(f"Escalation resolved for mission {mission_id}.")

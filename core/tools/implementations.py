@@ -9,6 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from cressida.core.paths import mission_dir, project_dir, resolve_mission_path, resolve_under_home
+
 
 # ── Sentinel exceptions ──────────────────────────────────────────────────────
 
@@ -23,13 +25,12 @@ class PhaseEscalatedError(Exception):
 # ── Tool implementations ─────────────────────────────────────────────────────
 
 def _resolve_path(path: str, mission_id: str = "") -> Path:
-    """Resolve a path, preferring mission-local paths when mission_id is given."""
-    p = Path(path)
-    if mission_id and not p.is_absolute():
-        mission_path = Path("missions") / mission_id / path
-        if mission_path.exists():
-            return mission_path
-    return p
+    """Resolve a path, preferring mission-local paths when mission_id is given.
+
+    Anchored to cressida_home() rather than the process CWD so a tool call means
+    the same file regardless of where Cressida was launched from.
+    """
+    return resolve_mission_path(path, mission_id)
 
 
 def _read_file(path: str, mission_id: str = "") -> str:
@@ -43,7 +44,9 @@ def _read_file(path: str, mission_id: str = "") -> str:
 
 
 def _write_file(path: str, content: str, mission_id: str = "") -> str:
-    p = Path(path)
+    # Absolute paths pass through untouched (that is how an agent writes into the
+    # target project); relative paths land under cressida_home(), not the CWD.
+    p = resolve_under_home(path)
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
@@ -156,7 +159,9 @@ def _run_shell(command: str, cwd: str | None = None, timeout: int = 60, mission_
             capture_output=True,
             text=True,
             timeout=timeout,
-            cwd=cwd or None,
+            # Default to the mission's target project rather than whatever
+            # directory the process happens to be in.
+            cwd=cwd or str(project_dir()),
         )
         combined = (proc.stdout + proc.stderr).strip()
         return f"exit={proc.returncode}\n{combined[:4000]}"
@@ -219,7 +224,7 @@ def _approve_phase(
         "timestamp": datetime.now().isoformat(),
     }
     if mission_id:
-        p = Path("missions") / mission_id / "bond_decisions" / f"approve_{phase}.json"
+        p = mission_dir(mission_id) / "bond_decisions" / f"approve_{phase}.json"
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(record, indent=2), encoding="utf-8")
     # Also persist to strategic memory
@@ -256,7 +261,7 @@ def _reject_phase(
         "timestamp": datetime.now().isoformat(),
     }
     if mission_id:
-        p = Path("missions") / mission_id / "bond_decisions" / f"reject_{phase}.json"
+        p = mission_dir(mission_id) / "bond_decisions" / f"reject_{phase}.json"
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(record, indent=2), encoding="utf-8")
     raise PhaseRejectedError(
@@ -285,7 +290,7 @@ def _escalate(
         ),
     }
     if mission_id:
-        esc_dir = Path("missions") / mission_id / "escalations"
+        esc_dir = mission_dir(mission_id) / "escalations"
         esc_dir.mkdir(parents=True, exist_ok=True)
         fname = f"escalation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         (esc_dir / fname).write_text(json.dumps(record, indent=2), encoding="utf-8")

@@ -32,14 +32,18 @@ from mcp.server.fastmcp import FastMCP
 
 # ── Resolve Cressida root from this file's location ──────────────────────────
 # mcp_server.py lives at <root>/cressida/mcp_server.py
-_CRESSIDA_PACKAGE = Path(__file__).parent          # .../cressida/
-_CRESSIDA_ROOT    = _CRESSIDA_PACKAGE.parent       # .../Cressida/
-# Missions are written to <root>/missions/ (relative to project root)
-_MISSIONS_DIR     = _CRESSIDA_ROOT / "missions"    # .../Cressida/missions/
+_CRESSIDA_PACKAGE = Path(__file__).parent          # .../Cressida/cressida/
+_CRESSIDA_ROOT    = _CRESSIDA_PACKAGE.parent       # .../Cressida/  (the *import* root)
 
-# Make sure the package is importable
+# Make sure the package is importable before importing from it.
 if str(_CRESSIDA_ROOT) not in sys.path:
     sys.path.insert(0, str(_CRESSIDA_ROOT))
+
+# Missions live under the package dir — which is the repository root and holds the
+# tracked agents/, knowledge/, and missions/ trees. The previous anchor used
+# _CRESSIDA_ROOT, one level higher, putting missions outside the repo and in a
+# different tree from the one agents wrote to. See cressida/core/paths.py.
+from cressida.core.paths import missions_root as _missions_root  # noqa: E402
 
 mcp = FastMCP(
     "Cressida",
@@ -67,7 +71,7 @@ def _ensure_monitor_started() -> None:
         from cressida.autonomy.monitor import StatusServer, StallMonitor
 
         bus = EventBus()
-        status_file = _MISSIONS_DIR / "status.json"
+        status_file = _missions_dir() / "status.json"
 
         server = StatusServer(bus, status_file=str(status_file))
         monitor = StallMonitor(bus)
@@ -83,8 +87,9 @@ def _ensure_monitor_started() -> None:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _missions_dir() -> Path:
-    _MISSIONS_DIR.mkdir(parents=True, exist_ok=True)
-    return _MISSIONS_DIR
+    d = _missions_root()
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 def _mission_path(mission_id: str) -> Path:
@@ -117,11 +122,13 @@ async def run_mission(
     provider: str = "auto",
     ollama_model: str = "llama3.2",
     priority: str = "medium",
+    project_dir: str = "",
 ) -> str:
     """Start a new Cressida mission from a plain-English brief.
 
-    Cressida spins up 9 agents and runs: research -> spec -> architecture ->
-    BOND gate -> implementation -> review. Returns immediately with a mission ID.
+    Cressida runs: research -> methodology research -> product definition ->
+    architecture -> BOND gate -> planning -> implementation -> review. Returns
+    immediately with a mission ID.
 
     Usage flow:
       1. Call run_mission with your brief -> get mission_id
@@ -134,6 +141,12 @@ async def run_mission(
         provider:     auto | opencode | claude_cli | anthropic | openai | gemini | groq | ollama
         ollama_model: Only used when provider=ollama. Default: llama3.2
         priority:     low | medium | high.
+        project_dir:  Absolute path to the project the mission should act on —
+                      where implementation code is written. Pass this whenever the
+                      mission targets an existing codebase; naming the path in the
+                      brief alone is NOT enough, because the agent subprocess is
+                      only granted access to directories passed here. Defaults to
+                      CRESSIDA_PROJECT_DIR, then the server's working directory.
 
     Returns:
         Mission ID and status message.
@@ -144,17 +157,22 @@ async def run_mission(
 
     mission_id = f"mission_{_dt.now().strftime('%Y%m%d_%H%M%S')}"
 
-    brief_path = _CRESSIDA_ROOT / "_mcp_brief.md"
+    # Keep the brief inside the mission it belongs to. It used to be written to
+    # the directory above the repo root, where concurrent missions overwrote each
+    # other's brief and the stray files were left behind on failure.
+    out_dir = _mission_path(mission_id)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    brief_path = out_dir / "brief.md"
     brief_path.write_text(brief, encoding="utf-8")
 
     # Run in background — returns immediately so the MCP client doesn't time out
     task = asyncio.create_task(
-        _background_mission(mission_id, str(brief_path), provider, ollama_model, priority)
+        _background_mission(
+            mission_id, str(brief_path), provider, ollama_model, priority, project_dir
+        )
     )
     _running_missions[mission_id] = task
 
-    out_dir = _mission_path(mission_id)
-    out_dir.mkdir(parents=True, exist_ok=True)
     return (
         f"Mission started: {mission_id}\n"
         f"Output: {out_dir}\n\n"
@@ -165,22 +183,21 @@ async def run_mission(
 
 
 async def _background_mission(
-    mission_id: str, brief_path: str, provider: str, ollama_model: str, priority: str
+    mission_id: str, brief_path: str, provider: str, ollama_model: str, priority: str,
+    project_dir: str = "",
 ) -> None:
     """Run a mission in the background."""
     try:
-        await _run_mission_bg(mission_id, brief_path, provider, ollama_model, priority)
+        await _run_mission_bg(
+            mission_id, brief_path, provider, ollama_model, priority, project_dir
+        )
     except Exception as exc:
         print(f"[CRESSIDA] Mission {mission_id} failed: {exc}")
         _persist_failure(mission_id, str(exc))
     finally:
         _running_missions.pop(mission_id, None)
-        try:
-            bp = Path(brief_path)
-            if bp.exists():
-                bp.unlink()
-        except Exception:
-            pass
+        # The brief now lives inside the mission directory as part of its record,
+        # so it is deliberately not deleted — it is the mission's provenance.
 
 
 def _persist_failure(mission_id: str, error: str) -> None:
@@ -199,10 +216,15 @@ def _persist_failure(mission_id: str, error: str) -> None:
 
 
 async def _run_mission_bg(
-    mission_id: str, brief_path: str, provider: str, ollama_model: str, priority: str
+    mission_id: str, brief_path: str, provider: str, ollama_model: str, priority: str,
+    project_dir: str = "",
 ) -> None:
     prev_cwd = os.getcwd()
-    os.chdir(_CRESSIDA_ROOT)
+    # Paths are resolved via cressida.core.paths now, so this chdir is no longer
+    # what makes artifacts land correctly — but keep the process anchored at the
+    # canonical home rather than one level above the repo, which is where mission
+    # output used to end up.
+    os.chdir(_missions_root().parent)
     try:
         from cressida.cli.commands import run_mission as _run_mission
         import argparse
@@ -214,6 +236,7 @@ async def _run_mission_bg(
             ollama_model=ollama_model,
             ollama_host="http://localhost:11434",
             priority=priority,
+            project_dir=project_dir or None,
         )
 
         _missions_dir()

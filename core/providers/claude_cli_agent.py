@@ -20,10 +20,19 @@ then invoke:
 
     claude -p --output-format json \
            --model <model> \
-           --append-system-prompt-file <spec-file>
+           --append-system-prompt-file <spec-file> \
+           --add-dir <cressida-home> [--add-dir <target-project>] \
+           --permission-mode acceptEdits
 
-feeding the (potentially large) user prompt on stdin so we never hit OS
-command-line length limits. The CLI runs its own single-shot completion and
+run with the target project as its working directory, feeding the (potentially
+large) user prompt on stdin so we never hit OS command-line length limits.
+
+The --add-dir / --permission-mode flags are not optional niceties. The CLI is
+sandboxed to its working directory and, under -p, there is no human present to
+approve an access prompt — so without them a read outside cwd is denied outright
+and file writes are refused even inside the mission's own folder. That failure
+mode is quiet: the agent returns its work as text, nothing reaches disk, and
+every later phase re-derives context that was never written down. The CLI runs its own single-shot completion and
 returns a JSON envelope whose `result` field is the final assistant text, which
 we hand to ProviderAgentBase._write_output exactly like the other providers.
 
@@ -48,6 +57,7 @@ from pathlib import Path
 from typing import Any
 
 from cressida.core import AgentRole, MissionState, Task
+from cressida.core.paths import cressida_home, project_dir
 from cressida.core.providers.base import ProviderAgentBase
 
 
@@ -140,30 +150,35 @@ class ClaudeCLIAgent(ProviderAgentBase):
             or os.environ.get("CRESSIDA_CLAUDE_MODEL")
             or (_STRATEGIC_MODEL if role in _STRATEGIC else _WORKER_MODEL)
         )
-        self._cwd = str(cressida_root)
+        # The working directory is now chosen per task (the mission's target
+        # project), not pinned to the install dir — see _invoke_blocking.
         self._timeout = timeout
 
     async def execute(self, state: MissionState, task: Task) -> Any:
         system_prompt = self._load_spec()
         user_prompt = self._build_user_prompt(state, task)
 
-        text = await self._invoke(system_prompt, user_prompt)
+        # The CLI is sandboxed to its working directory, so it must be told about
+        # both trees the mission legitimately spans: the target project and the
+        # Cressida install (mission artifacts, specs, knowledge).
+        target = project_dir(state)
+        text = await self._invoke(system_prompt, user_prompt, target)
 
         self._write_output(state.mission_id, task, text)
         return text
 
     # ── CLI invocation ──────────────────────────────────────────────────────
 
-    async def _invoke(self, system_prompt: str, user_prompt: str) -> str:
+    async def _invoke(self, system_prompt: str, user_prompt: str, target: Path | None = None) -> str:
         import asyncio
 
         # Run the blocking subprocess in a thread so we don't stall the event
         # loop and stay portable across asyncio subprocess quirks on Windows.
         return await asyncio.get_event_loop().run_in_executor(
-            None, self._invoke_blocking, system_prompt, user_prompt
+            None, self._invoke_blocking, system_prompt, user_prompt, target
         )
 
-    def _invoke_blocking(self, system_prompt: str, user_prompt: str) -> str:
+    def _invoke_blocking(self, system_prompt: str, user_prompt: str, target: Path | None = None) -> str:
         # The agent spec can be large; pass it as a file to avoid arg limits.
         spec_file = tempfile.NamedTemporaryFile(
             mode="w", suffix=".md", delete=False, encoding="utf-8"
@@ -172,13 +187,26 @@ class ClaudeCLIAgent(ProviderAgentBase):
             spec_file.write(system_prompt)
             spec_file.close()
 
+            target = (target or project_dir()).resolve()
+            home = cressida_home()
+
             cmd = [
                 self._cli,
                 "-p",
                 "--output-format", "json",
                 "--model", self._model,
                 "--append-system-prompt-file", spec_file.name,
+                # Grant the two trees a mission spans. Without --add-dir the CLI
+                # refuses to read anything outside its cwd, and under -p there is
+                # nobody to approve the prompt, so the read is denied outright.
+                "--add-dir", str(home),
+                # Under -p, file writes also require approval that cannot be
+                # given, so an agent could not persist artifacts into its own
+                # mission folder. acceptEdits pre-grants edits.
+                "--permission-mode", "acceptEdits",
             ]
+            if target != home:
+                cmd.extend(["--add-dir", str(target)])
 
             try:
                 proc = subprocess.run(
@@ -189,7 +217,9 @@ class ClaudeCLIAgent(ProviderAgentBase):
                     encoding="utf-8",
                     errors="replace",
                     timeout=self._timeout,
-                    cwd=self._cwd,
+                    # Run in the target project, not the Cressida install, so
+                    # relative work the agent does lands where the mission acts.
+                    cwd=str(target),
                 )
             except subprocess.TimeoutExpired as exc:
                 raise RuntimeError(

@@ -2,7 +2,16 @@
 
 **Autonomous Multi-Agent Software Engineering Intelligence Framework**
 
-CRESSIDA takes a plain-English brief and runs a full software engineering pipeline — research, spec, architecture, implementation, tests, review — using a team of specialised LLM agents coordinated by a dependency graph. It works with any major LLM provider and can run unattended via a scheduler daemon.
+CRESSIDA takes a plain-English brief and runs a full software engineering pipeline — research, methodology scan, product definition, architecture, planning, implementation, review — using a team of specialised LLM agents coordinated by a dependency graph. It works with any major LLM provider and can run unattended via a scheduler daemon.
+
+The pipeline:
+
+```
+research ─┬─> methodology research (LEITER) ─┬─> architecture ─> BOND gate ─>
+          └─> product definition ────────────┘   planning ─> implementation ─> review
+```
+
+**M** commissions the mission before anything runs (pruning agents, tools, and models to cut tokens); **R** reflects on it afterwards (distilling lessons into per-agent playbooks). **BOND** is a hard gate in the middle.
 
 ---
 
@@ -88,17 +97,49 @@ Verify inside Claude Code by calling the `cressida_status` tool, then kick off w
 | **BOND** | Mission director and autonomous gate. Reviews architecture before planning proceeds; can reject a plan or escalate to a human. |
 | **INTELLIGENCE** | Research and product definition. Produces market research, PRDs, and roadmaps. |
 | **LEITER** | External intelligence. As soon as the mission is drafted, goes out to the open internet and reads primary sources to establish how this is actually built *today* — current versions, idiomatic patterns, deprecated approaches, known pitfalls — and writes a cited methodology brief that Q's architecture and BRANCH's implementation are held to. |
-| **Q** | Specification writer. Converts the PRD into an engineering spec and test strategy. |
-| **TANNER** | Test engineer. Writes the full test suite before implementation begins. |
+| **Q** | Architecture. Converts the PRD into a system design, API contracts, and data models. |
+| **TANNER** | Planning. Builds the dependency graph, finds the parallelisable batches and critical path, and populates the backlog. |
 | **BRANCH** | Backend implementation. APIs, services, database layer. |
-| **ROOK** | Infrastructure and deployment. Dockerfiles, Kubernetes manifests, CI/CD pipelines. |
-| **BOOTHROYD** | Frontend implementation. UI components, client-side logic. |
-| **MONEYPENNY** | Documentation and project tracking. Keeps the mission dossier up to date. |
-| **REVIEW** | Code review and coverage audit. Final quality gate before mission close. |
+| **ROOK** | Frontend implementation. UI components, client-side logic. |
+| **BOOTHROYD** | Infrastructure and deployment. Dockerfiles, Kubernetes manifests, CI/CD pipelines. |
+| **MONEYPENNY** | Knowledge operations and runtime tracking. Keeps the mission dossier up to date. |
+| **REVIEW** | Code review, testing, and coverage audit. Final quality gate before mission close. |
 
 Tasks run in parallel wherever the dependency graph allows — LEITER's methodology research runs alongside INTELLIGENCE's product definition, and Q waits on both. BOND sits as a mandatory checkpoint between architecture and planning — if BOND rejects the plan, all downstream tasks are blocked.
 
 LEITER exists because a model's priors go stale. It is the one agent required to cite a fetched URL and date for every claim, and to mark anything it could not verify as `[UNVERIFIED]` — so the architecture is designed against the ecosystem as it is now, not as it was at training time. Web search uses `BRAVE_API_KEY` when set and falls back to DuckDuckGo; `fetch_url` reads the pages themselves.
+
+---
+
+## The constitution
+
+Every agent's prompt carries [`agents/CONSTITUTION.md`](agents/CONSTITUTION.md) — 15 articles that govern *how* agents work, injected ahead of the role spec and outranking it. Precedence is: a resolved human escalation → the constitution → the agent spec → the learned playbook → the agent's own judgment.
+
+Each article pairs a rule with **the reason it exists**, deliberately: an agent that understands why a rule is there can apply it to a situation the wording never anticipated, where one that merely memorised it will either follow it into absurdity or drop it the moment the phrasing doesn't quite fit. The articles cover scope discipline, producing declared artifacts at declared paths, evidence over recall, faithful reporting, when to escalate versus when to just go check, role boundaries, decision trails, least privilege, secrets, and finishing the whole task.
+
+Two properties are treated as load-bearing above the rest — **honest reporting** and **reversibility** — because those are what make every other rule recoverable when it gets broken.
+
+---
+
+## Directories: the install vs. the target project
+
+A mission spans two trees, and keeping them straight is what lets Cressida run against any project from any working directory:
+
+| Tree | What lives there | How it resolves |
+|---|---|---|
+| **Cressida home** | Agent specs, knowledge, playbooks, and all mission artifacts (`missions/<id>/`) | The package directory. Override with `CRESSIDA_HOME`; move just missions with `CRESSIDA_MISSIONS_DIR`. |
+| **Target project** | The codebase the mission acts on — where implementation source is written | `--project-dir`, else `CRESSIDA_PROJECT_DIR`, else the current directory. |
+
+Analysis artifacts (research report, methodology brief, PRD, architecture, review) always stay in the mission directory, so a mission never litters the project it is working on. Only implementation source goes to the target.
+
+All path resolution goes through [`core/paths.py`](core/paths.py): relative paths are anchored to Cressida home, never the process working directory, while **absolute paths pass through untouched** — which is how an agent writes into the target project.
+
+```bash
+# Act on an existing codebase from anywhere
+cressida run brief.md --project-dir /path/to/my-app
+```
+
+> Naming the target in the brief prose is **not** sufficient. CLI-backed providers (`claude_cli`, `opencode`) run sandboxed and are only granted the directories Cressida passes them, so the target must be supplied as a parameter — via `--project-dir`, the MCP `project_dir` argument, or `project_dir:` in an inbox brief's frontmatter.
 
 ---
 
@@ -177,11 +218,13 @@ pip install -e ".[anthropic]"    # framework + a provider (or .[openai] / .[gemi
 
 `pyyaml`, `aiohttp`, and `mcp` come in automatically as core dependencies (needed for the daemon scheduler and the MCP server).
 
-Optional (for web search in INTELLIGENCE):
+Optional (for web research by LEITER and INTELLIGENCE):
 
 ```bash
 export BRAVE_API_KEY=...         # uses Brave Search; falls back to DuckDuckGo
 ```
+
+Search works keyless via the DuckDuckGo fallback, but a Brave key makes it reliable — worth setting, since LEITER's whole job depends on it. Page reading (`fetch_url`) needs no key.
 
 ---
 
@@ -193,9 +236,12 @@ export BRAVE_API_KEY=...         # uses Brave Search; falls back to DuckDuckGo
 cressida run brief.md
 ```
 
-`brief.md` is a plain-text description of what you want built. Output lands in `cressida/missions/<mission-id>/`.
+`brief.md` is a plain-text description of what you want built. Mission artifacts land in `cressida/missions/<mission-id>/`; the run prints both the mission directory and the resolved target project on startup.
 
 ```bash
+# Point the mission at an existing codebase (see Directories, above)
+cressida run brief.md --project-dir /path/to/my-app
+
 # Force a specific provider
 cressida run brief.md --provider openai
 
@@ -223,6 +269,7 @@ The daemon watches two directories:
 ```yaml
 brief: "Build a REST API for a todo app with PostgreSQL"
 priority: high
+project_dir: "C:/path/to/my-app"    # optional — target codebase
 ```
 
 **Scheduled trigger** (`cressida/missions/scheduled/weekly-audit.yaml`):
@@ -259,14 +306,15 @@ Stalled tasks (no progress for 30 min) are detected automatically. Post-mortems 
 
 ```
 cressida/
-├── agents/          # Agent personality specs (markdown system prompts — never modified)
+├── agents/          # Agent specs (markdown system prompts) + CONSTITUTION.md
 ├── autonomy/        # Daemon: watcher, stall monitor, post-mortem analyser
 ├── cli/             # CLI entry points (run, daemon, resolve-escalation)
 ├── core/
 │   ├── llm_agent.py         # Anthropic agentic loop
-│   ├── providers/           # OpenAI / Gemini / Groq / Ollama agents + auto-detect
+│   ├── paths.py             # Canonical path resolution (home vs target project)
+│   ├── providers/           # Claude CLI / opencode / OpenAI / Gemini / Groq / Ollama + auto-detect
 │   ├── tools/               # Tool definitions and implementations
-│   └── agent_factory.py     # Instantiates all 11 agents for a given provider
+│   └── agent_factory.py     # Instantiates all 12 agents for a given provider
 ├── evaluation/      # Scoring, reward store, feedback collector
 ├── learning/        # Self-improvement loop (R): playbooks, reflection, skills, curator
 ├── obsidian/        # Obsidian bridge: bidirectional vault sync, inbox watcher
@@ -303,6 +351,18 @@ autonomy:
   bond:
     confidence_threshold: 0.7       # BOND's internal gate threshold
 ```
+
+### Environment variables
+
+| Variable | Effect |
+|---|---|
+| `CRESSIDA_PROVIDER` | Force a provider, bypassing auto-detection |
+| `CRESSIDA_HOME` | Relocate the whole installation (specs, knowledge, missions) |
+| `CRESSIDA_MISSIONS_DIR` | Put mission artifacts elsewhere — e.g. outside a repo |
+| `CRESSIDA_PROJECT_DIR` | Default target project for missions |
+| `CRESSIDA_OBSIDIAN_VAULT` | Vault path for the graph mirror (optional — no-ops if unset) |
+| `BRAVE_API_KEY` | Reliable web search for LEITER / INTELLIGENCE |
+| `CRESSIDA_CLAUDE_CLI` | Explicit path to the `claude` binary if it isn't on `PATH` |
 
 ---
 

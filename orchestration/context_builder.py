@@ -3,12 +3,34 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from cressida.core.paths import cressida_home, mission_dir, project_dir
 from cressida.core.types import AgentRole, AgentMessage
 
 
+def _resolve_root(cressida_root: str | Path | None) -> Path:
+    """Interpret a caller-supplied root, tolerating the legacy relative defaults.
+
+    Historically callers passed ``"."`` or ``"cressida"``, which only resolved
+    correctly when the process happened to be launched from the right directory.
+    Both now collapse to ``cressida_home()``.
+    """
+    if cressida_root is None:
+        return cressida_home()
+    p = Path(cressida_root)
+    if p.is_absolute():
+        return p
+    if str(p) in (".", "", "cressida"):
+        return cressida_home()
+    return cressida_home() / p
+
+
 class ContextBuilder:
-    def __init__(self, cressida_root: str | Path = "cressida") -> None:
-        self._root = Path(cressida_root)
+    def __init__(self, cressida_root: str | Path | None = None) -> None:
+        # Default to the canonical home rather than a relative literal, so specs,
+        # playbooks, and mission artifacts resolve identically no matter what the
+        # process working directory is. A relative root (including the legacy "."
+        # and "cressida" defaults callers still pass) is interpreted against home.
+        self._root = _resolve_root(cressida_root)
 
     def build_prompt(
         self,
@@ -19,10 +41,19 @@ class ContextBuilder:
         reads: list[str],
         task_description: str,
         objectives: list[str] | None = None,
+        target_dir: str | Path | None = None,
     ) -> str:
         sections: list[str] = []
         sections.append(f"# MISSION: {mission_id}")
         sections.append(f"## Brief\n{brief}")
+        sections.append(
+            "## Directories\n"
+            f"- Mission directory (analysis artifacts): `{mission_dir(mission_id)}`\n"
+            f"- Target project (source code goes here): `{target_dir or project_dir()}`\n"
+            "\nUse absolute paths when writing source files into the target project. "
+            "Relative paths are interpreted against the Cressida installation, not "
+            "the target project."
+        )
         if objectives:
             sections.append("## Objectives\n" + "\n".join(f"- {o}" for o in objectives))
         sections.append(f"## Task: {task_id}\n{task_description}")

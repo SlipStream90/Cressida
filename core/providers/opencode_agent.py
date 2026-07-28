@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from cressida.core import AgentRole, MissionState, Task
+from cressida.core.paths import project_dir
 from cressida.core.providers.base import ProviderAgentBase
 
 
@@ -125,7 +126,8 @@ class OpenCodeAgent(ProviderAgentBase):
             or (_STRATEGIC_MODEL if role in _STRATEGIC else _WORKER_MODEL)
             or ""
         )
-        self._cwd = str(cressida_root)
+        # Working directory is chosen per task (the mission's target project)
+        # rather than pinned to the install dir — see _invoke_blocking.
         self._timeout = timeout
 
     async def execute(self, state: MissionState, task: Task) -> Any:
@@ -137,26 +139,28 @@ class OpenCodeAgent(ProviderAgentBase):
         # so we prepend the agent spec to the user prompt.
         full_prompt = f"[Agent Spec: {self.role.value}]\n\n{system_prompt}\n\n---\n\n[Task]\n\n{user_prompt}"
 
-        text = await self._invoke(full_prompt)
+        # Run against the mission's target project, not the Cressida install.
+        text = await self._invoke(full_prompt, project_dir(state))
 
         self._write_output(state.mission_id, task, text)
         return text
 
     # ── CLI invocation ──────────────────────────────────────────────────────
 
-    async def _invoke(self, prompt: str) -> str:
+    async def _invoke(self, prompt: str, target: Path | None = None) -> str:
         import asyncio
 
         return await asyncio.get_event_loop().run_in_executor(
-            None, self._invoke_blocking, prompt
+            None, self._invoke_blocking, prompt, target
         )
 
-    def _invoke_blocking(self, prompt: str) -> str:
+    def _invoke_blocking(self, prompt: str, target: Path | None = None) -> str:
+        work_dir = str((target or project_dir()).resolve())
         cmd = [
             self._cli,
             "run",
             "--format", "json",
-            "--dir", self._cwd,
+            "--dir", work_dir,
             "--auto",
         ]
 
@@ -175,7 +179,7 @@ class OpenCodeAgent(ProviderAgentBase):
                 encoding="utf-8",
                 errors="replace",
                 timeout=self._timeout,
-                cwd=self._cwd,
+                cwd=work_dir,
             )
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(

@@ -19,6 +19,14 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser = subparsers.add_parser("run", help="Run a mission")
     run_parser.add_argument("brief", type=str, help="Mission brief file or inline string")
     run_parser.add_argument("--mission-id", type=str, default=None, help="Custom mission ID")
+    run_parser.add_argument(
+        "--project-dir", type=str, default=None,
+        help=(
+            "Target project the mission acts on — where implementation code is written. "
+            "Defaults to CRESSIDA_PROJECT_DIR, then the current directory. "
+            "Mission analysis artifacts always stay in the Cressida missions tree."
+        ),
+    )
     run_parser.add_argument("--provider", type=str, default="auto", help=_PROVIDER_HELP)
     run_parser.add_argument("--ollama-model", type=str, default="llama3.2", help="Ollama model name (used when provider=ollama)")
     run_parser.add_argument("--ollama-host", type=str, default="http://localhost:11434", help="Ollama server URL")

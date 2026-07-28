@@ -12,6 +12,7 @@ except ImportError:
 
 from cressida.core.interfaces import Agent
 from cressida.core import AgentRole, MissionState, Task
+from cressida.core.paths import mission_dir, project_dir, resolve_under_home
 from cressida.core.tools.definitions import get_tools_for_role, select_tools_for_task
 from cressida.core.tools.implementations import execute_tool, PhaseRejectedError, PhaseEscalatedError
 from cressida.orchestration.context_builder import ContextBuilder
@@ -69,7 +70,8 @@ class LLMAgent(Agent):
                 "anthropic package is not installed. Run: pip install anthropic"
             )
         self.role = role
-        self._agents_dir = Path(agents_dir)
+        # Relative spec dirs are anchored to cressida_home(), not the CWD.
+        self._agents_dir = resolve_under_home(agents_dir)
         self._cressida_root = Path(cressida_root)
         self._context_builder = ContextBuilder(cressida_root)
         self._client = anthropic.Anthropic()
@@ -105,6 +107,7 @@ class LLMAgent(Agent):
             reads=task.metadata.get("reads", []),
             task_description=task.description,
             objectives=state.objectives if state.objectives else None,
+            target_dir=project_dir(state),
         )
 
         # M (the dispatcher) may have pruned the toolset for this task to cut
@@ -188,16 +191,17 @@ class LLMAgent(Agent):
         """
         writes: list[str] = task.metadata.get("writes", [])
         if not writes:
-            out_dir = Path("missions") / mission_id / "outputs"
+            out_dir = mission_dir(mission_id) / "outputs"
             out_dir.mkdir(parents=True, exist_ok=True)
             (out_dir / f"{task.id}.md").write_text(content, encoding="utf-8")
             return
 
         for write_path in writes:
             resolved = write_path.replace("<mission_id>", mission_id)
-            p = Path(resolved)
-            if not p.is_absolute():
-                p = Path.cwd() / p
+            # Anchored to cressida_home(), not the CWD — see core/paths.py.
+            # Absolute paths pass through, which is how a mission writes into an
+            # external target project.
+            p = resolve_under_home(resolved)
             if p.suffix:
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_text(content, encoding="utf-8")

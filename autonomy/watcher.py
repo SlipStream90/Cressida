@@ -234,7 +234,11 @@ class MissionWatcher:
             source="watcher",
         ))
 
-        state = _build_mission_state(mission_id, brief, priority)
+        # An inbox brief can name its target project in frontmatter:
+        #   project_dir: C:/path/to/project
+        state = _build_mission_state(
+            mission_id, brief, priority, target_dir=meta.get("project_dir") or None
+        )
         coordinator = Coordinator(self._registry, self._event_bus, self._memory)
         shared = SharedState()
         shared.mission = type(shared.mission)(mission_id=mission_id, brief=brief)

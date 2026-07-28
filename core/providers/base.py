@@ -18,6 +18,7 @@ from typing import Any
 
 from cressida.core.interfaces import Agent
 from cressida.core import AgentRole, MissionState, Task
+from cressida.core.paths import mission_dir, project_dir, resolve_under_home
 from cressida.orchestration.context_builder import ContextBuilder
 
 
@@ -38,7 +39,8 @@ class ProviderAgentBase(Agent):
         max_tokens: int = 8192,
     ) -> None:
         self.role = role
-        self._agents_dir = Path(agents_dir)
+        # Relative spec dirs are anchored to cressida_home(), not the CWD.
+        self._agents_dir = resolve_under_home(agents_dir)
         self._context_builder = ContextBuilder(cressida_root)
         self._max_tokens = max_tokens
         self._spec: str | None = None
@@ -67,21 +69,24 @@ class ProviderAgentBase(Agent):
             reads=task.metadata.get("reads", []),
             task_description=task.description,
             objectives=state.objectives if state.objectives else None,
+            target_dir=project_dir(state),
         )
 
     def _write_output(self, mission_id: str, task: Task, content: str) -> None:
         writes: list[str] = task.metadata.get("writes", [])
         if not writes:
-            out_dir = Path("missions") / mission_id / "outputs"
+            out_dir = mission_dir(mission_id) / "outputs"
             out_dir.mkdir(parents=True, exist_ok=True)
             (out_dir / f"{task.id}.md").write_text(content, encoding="utf-8")
             return
         for write_path in writes:
             resolved = write_path.replace("<mission_id>", mission_id)
-            p = Path(resolved)
-            if not p.is_absolute():
-                # Resolve relative to CWD (should be project root)
-                p = Path.cwd() / p
+            # Anchored to cressida_home(), not the CWD. Resolving against the CWD
+            # meant a mission launched from outside the package wrote its
+            # artifacts into a second mission tree that no downstream `reads`
+            # could find. Absolute paths still pass through, which is how a
+            # mission writes into an external target project.
+            p = resolve_under_home(resolved)
             if p.suffix:
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_text(content, encoding="utf-8")

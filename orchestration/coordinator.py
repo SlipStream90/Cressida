@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from cressida.core.events import Event, EventBus, EventType
+from cressida.core.paths import cressida_home, mission_dir
 from cressida.core.registry import AgentRegistry
 from cressida.core.types import AgentRole, MissionState, MissionStatus, Task, TaskStatus
 from cressida.memory.system import MemorySystem
@@ -43,9 +44,9 @@ class Coordinator:
 
         # Learning layer (agent R): reflection distils lessons into per-agent
         # playbooks after every mission; the curator keeps them consolidated.
-        # Anchor to the package dir (…/cressida/) so the write side lines up with
-        # the ContextBuilder read side, which resolves knowledge/ relative to it.
-        pkg_dir = Path(__file__).parent.parent  # …/cressida/orchestration/ -> …/cressida/
+        # Anchor to the canonical home so the write side lines up with the
+        # ContextBuilder read side, which resolves knowledge/ the same way.
+        pkg_dir = cressida_home()
         self._playbooks = PlaybookStore(pkg_dir / "knowledge" / "playbooks")
         self._reflection = ReflectionEngine(
             playbooks=self._playbooks,
@@ -256,9 +257,10 @@ class Coordinator:
 
     def _persist_state(self, state: MissionState) -> None:
         """Write execution_state.json so MCP status tools can read it."""
-        # Use absolute path based on this file's location to avoid CWD issues
-        cressida_root = Path(__file__).parent.parent.parent
-        path = cressida_root / "missions" / state.mission_id / "execution_state.json"
+        # Canonical mission dir — see core/paths.py. The previous
+        # `Path(__file__).parent.parent.parent` climbed one level above the repo
+        # root and wrote missions outside it, splitting them from agent output.
+        path = mission_dir(state.mission_id) / "execution_state.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         tasks_data = {}
         for tid, task in state.tasks.items():
