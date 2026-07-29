@@ -96,7 +96,7 @@ Verify inside Claude Code by calling the `cressida_status` tool, then kick off w
 | **R** | Records and learning curator. Runs *after* every mission and distils what happened into per-agent playbooks and reusable skills, then consolidates them. Those lessons are injected back into agents' future prompts — this is the self-improvement layer. |
 | **BOND** | Mission director and autonomous gate. Reviews architecture before planning proceeds; can reject a plan or escalate to a human. |
 | **INTELLIGENCE** | Research and product definition. Produces market research, PRDs, and roadmaps. |
-| **** | External intelligence. As soon as the mission is drafted, goes out to the open internet and reads primary sources to establish how this is actually built *today* — current versions, idiomatic patterns, deprecated approaches, known pitfalls — and writes a cited methodology brief that Q's architecture and BRANCH's implementation are held to. |
+| **LETTER** | External intelligence. As soon as the mission is drafted, goes out to the open internet and reads primary sources to establish how this is actually built *today* — current versions, idiomatic patterns, deprecated approaches, known pitfalls — and writes a cited methodology brief that Q's architecture and BRANCH's implementation are held to. |
 | **Q** | Architecture. Converts the PRD into a system design, API contracts, and data models. |
 | **TANNER** | Planning. Builds the dependency graph, finds the parallelisable batches and critical path, and populates the backlog. |
 | **BRANCH** | Backend implementation. APIs, services, database layer. |
