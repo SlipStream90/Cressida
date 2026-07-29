@@ -27,10 +27,33 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+import re
+
 from cressida.core import AgentRole, MissionState, Task
 from cressida.core.model_tiers import DEFAULT_MODEL
+from cressida.core.skills_discovery import discover_skills
 from cressida.core.tools.definitions import get_tool_names_for_role
 from cressida.orchestration.router import TaskRouter
+
+_WORD_RE = re.compile(r"[a-z]{5,}")
+_STOPWORDS = {
+    "these", "those", "their", "which", "where", "about", "using", "build",
+    "write", "create", "review", "design", "system", "project", "handle",
+    "should", "before", "after", "every", "existing", "content", "requests",
+    # Cressida's own fixed task-template vocabulary (_build_mission_state) -
+    # these words appear on every mission's implementation/review task
+    # regardless of what's being built, so they can never be real signal.
+    "implement", "implementation", "architecture", "backlog", "specified",
+    "directory", "target", "source", "configuration", "based", "complete",
+    "correctness", "adherence", "quality", "provide", "report",
+}
+
+
+def _significant_words(text: str) -> set[str]:
+    """Words worth matching on: 5+ letters, minus a small generic stopword set.
+    Deliberately crude (no stemming/embeddings) - skill descriptions are
+    already written keyword-dense for exactly this kind of matching."""
+    return {w for w in _WORD_RE.findall(text.lower()) if w not in _STOPWORDS}
 
 
 # ── Tool intent profiles ─────────────────────────────────────────────────────
@@ -58,12 +81,15 @@ _NON_SHELL_ROLES = {
     AgentRole.Q, AgentRole.TANNER, AgentRole.MONEYPENNY,
 }
 
-# Skill hints: keyword in the task → skill worth loading. Empty match ⇒ no skill.
 # Roles whose output is source code (not a plan, a decision, or a document) —
 # ponytail (anti-over-engineering: YAGNI, stdlib-first, simplest-thing-that-works)
 # always applies to these regardless of what keywords the brief happens to use.
 _CODE_WRITING_ROLES = {AgentRole.BRANCH, AgentRole.ROOK, AgentRole.BOOTHROYD, AgentRole.REVIEW}
 
+# Skill hints: keyword in the task → skill worth loading. Empty match ⇒ no skill.
+# This is a small, hand-curated fast path; _select_skills also matches against
+# every skill actually installed on this machine (core/skills_discovery.py), so
+# a skill isn't invisible to commissioning just because this table predates it.
 _SKILL_HINTS: dict[str, str] = {
     "banner": "banner-design",
     "logo": "design",
@@ -136,6 +162,7 @@ class Dispatcher:
         """Produce a CommissionPlan for a mission and (optionally) annotate tasks."""
         commissions: list[TaskCommission] = []
         activated: list[AgentRole] = []
+        project_dir = str(state.metadata.get("project_dir", ""))
 
         for task in state.tasks.values():
             role = self._resolve_role(task)
@@ -151,7 +178,7 @@ class Dispatcher:
                 continue
 
             tools = self._select_tools(role, task)
-            skills = self._select_skills(task, role)
+            skills = self._select_skills(task, role, project_dir, state.brief)
             model = self._select_model(role, task)
             commission = TaskCommission(
                 task_id=task.id,
@@ -230,19 +257,56 @@ class Dispatcher:
         selected = [t for t in selected if t in allowed]
         return selected or sorted(allowed)
 
-    def _select_skills(self, task: Task, role: AgentRole | None = None) -> list[str]:
+    def _select_skills(
+        self, task: Task, role: AgentRole | None = None, project_dir: str = "", brief: str = "",
+    ) -> list[str]:
         haystack = f"{task.name} {task.description}".lower()
         tags = [str(t).lower() for t in task.metadata.get("tags", [])]
         hits: list[str] = []
         for keyword, skill in _SKILL_HINTS.items():
-            if keyword in haystack or keyword in tags:
+            # Word-boundary match, not plain substring - a bare "in" check let
+            # short keywords like "ui" match inside unrelated words (e.g.
+            # "req-UI-rements"), pulling in ui-styling for tasks with nothing
+            # to do with UI.
+            pattern = r"\b" + re.escape(keyword) + r"\b"
+            if re.search(pattern, haystack) or keyword in tags:
                 if skill not in hits:
                     hits.append(skill)
+
+        # Beyond the curated table above, match against every skill actually
+        # installed on this machine — scoped to code-writing roles only
+        # (implementing the project is the point; BOND's gate-approval or
+        # TANNER's task-graph work never invokes a Skill tool at all) and
+        # against the brief, not task.description: every mission's
+        # implementation/review task shares identical fixed template wording
+        # (_build_mission_state), so matching against it finds the exact same
+        # false positives on *every single mission* regardless of what's being
+        # built. Words are weighted by how rare they are across the whole
+        # discovered set (a lightweight IDF) - generic software vocabulary
+        # appears in most skill descriptions and isn't real signal on its own -
+        # and a match needs 2+ shared distinctive words, not just 1, since a
+        # short brief and a long skill description can share a single word by
+        # pure coincidence.
+        if role in _CODE_WRITING_ROLES:
+            task_words = _significant_words(brief)
+            if task_words:
+                skill_words = {name: _significant_words(desc) for name, desc in discover_skills(project_dir).items()}
+                doc_freq: dict[str, int] = {}
+                for words in skill_words.values():
+                    for w in words:
+                        doc_freq[w] = doc_freq.get(w, 0) + 1
+                rarity_cutoff = max(2, round(len(skill_words) * 0.06))
+                distinctive = {w for w, c in doc_freq.items() if c <= rarity_cutoff}
+                for name, words in skill_words.items():
+                    if name in hits:
+                        continue
+                    if len((task_words & words) & distinctive) >= 2:
+                        hits.append(name)
+
         # ponytail's own trigger is "ANY coding task: writing, adding, refactoring,
         # fixing, reviewing, or designing code" - every implementation/review role
-        # qualifies unconditionally, not just on a keyword match, so it isn't
-        # bottlenecked on _SKILL_HINTS text-matching a brief that never says
-        # "simplify" or "yagni" out loud.
+        # qualifies unconditionally, not just on a keyword/discovery match, so it
+        # isn't bottlenecked on a brief that never happens to say "simplify."
         if role in _CODE_WRITING_ROLES and "ponytail" not in hits:
             hits.append("ponytail")
         return hits
