@@ -7,11 +7,44 @@ from pathlib import Path
 from typing import Any
 
 from cressida.core.events import Event, EventBus, EventType
+from cressida.core.paths import mission_dir, project_dir
 from cressida.core.registry import AgentRegistry
 from cressida.core.types import AgentRole, MissionState, Task, TaskStatus, Priority
 from cressida.orchestration.context_builder import ContextBuilder
 from cressida.orchestration.dependency_graph import DependencyGraph
 from cressida.orchestration.router import RoutingError, TaskRouter
+
+# Roles whose job is to persist files (not just return prose) — a mission
+# genuinely stalling on write access still returns a normal-looking text
+# response (the agent narrates the code it couldn't save instead of raising),
+# so "the coroutine didn't throw" is not sufficient evidence of success for
+# these roles. See mission_20260728_130409: BRANCH's implementation task was
+# recorded COMPLETED with error=None despite writing zero files, because the
+# CLI subprocess it shells out to had its write access denied and it returned
+# a description of the code as chat text instead.
+_VERIFY_FILES_WRITTEN_ROLES = {AgentRole.BRANCH}
+
+
+def _wrote_files_since(mission_id: str, since: datetime, target_dir: Path | None = None) -> bool:
+    """True if any file under the mission dir (or the mission's target project
+    dir, when given) was created/modified at or after `since`."""
+    # A little slack for filesystem mtime resolution / clock skew between the
+    # agent subprocess and this process.
+    cutoff = since.timestamp() - 2.0
+    dirs = [mission_dir(mission_id)]
+    if target_dir is not None:
+        dirs.append(target_dir)
+    for d in dirs:
+        if not d.exists():
+            continue
+        for f in d.rglob("*"):
+            if f.is_file():
+                try:
+                    if f.stat().st_mtime >= cutoff:
+                        return True
+                except OSError:
+                    continue
+    return False
 
 
 class TaskExecutor:
@@ -208,6 +241,27 @@ class TaskExecutor:
             return
         try:
             result = await agent.execute(state, task)
+
+            if role in _VERIFY_FILES_WRITTEN_ROLES and not _wrote_files_since(
+                state.mission_id, task.started_at, project_dir(state)
+            ):
+                task.status = TaskStatus.FAILED
+                task.completed_at = datetime.now()
+                task.output = result
+                task.error = (
+                    f"{role.value} returned without writing any files to the mission or "
+                    "project directory. Likely a denied file write (e.g. a sandboxed CLI "
+                    "subprocess with no one to approve the edit) that the agent narrated "
+                    "as text instead of raising — treating that as a completed "
+                    "implementation would silently ship no code."
+                )
+                await self._event_bus.publish(Event(
+                    type=EventType.TASK_FAILED,
+                    data={"task_id": task.id, "mission_id": state.mission_id, "error": task.error},
+                    source="executor",
+                ))
+                return
+
             task.status = TaskStatus.COMPLETED
             task.completed_at = datetime.now()
             task.output = result

@@ -34,6 +34,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("status", help="Show system status")
 
+    dashboard_parser = subparsers.add_parser("dashboard", help="Run the live mission-progress dashboard (web UI)")
+    dashboard_parser.add_argument("--port", type=int, default=7438, help="Port to serve the dashboard on (default: 7438)")
+
     daemon_parser = subparsers.add_parser("daemon", help="Run unattended: watch inbox/scheduled dirs and fire missions")
     daemon_parser.add_argument("--provider", type=str, default="auto", help=_PROVIDER_HELP)
     daemon_parser.add_argument("--ollama-model", type=str, default="llama3.2", help="Ollama model name (used when provider=ollama)")
@@ -71,6 +74,11 @@ async def async_main() -> int:
     elif args.command == "status":
         from .commands import show_status
         return await show_status(args)
+
+    elif args.command == "dashboard":
+        from cressida.dashboard import run_dashboard_blocking
+        run_dashboard_blocking(port=args.port)
+        return 0
 
     elif args.command == "daemon":
         from .commands import run_daemon

@@ -33,6 +33,17 @@ def _wire_vault_sync(event_bus: EventBus) -> None:
         print(f"[commands] vault sync wiring skipped: {e}")
 
 
+def _wire_narrator(event_bus: EventBus) -> None:
+    """Subscribe a live console narrator so a mission's progress is visible in
+    its terminal as it happens, not just as a final result line."""
+    try:
+        from cressida.autonomy.narrator import wire_console_narrator
+
+        wire_console_narrator(event_bus)
+    except Exception as e:
+        print(f"[commands] console narrator wiring skipped: {e}")
+
+
 def _build_mission_state(
     mission_id: str,
     brief: str,
@@ -225,6 +236,7 @@ async def run_mission(args: argparse.Namespace) -> int:
 
     event_bus = EventBus()
     _wire_vault_sync(event_bus)
+    _wire_narrator(event_bus)
     registry = AgentRegistry()
     memory = MemorySystem()
     registry.register_default(
@@ -283,6 +295,7 @@ async def run_daemon(args: argparse.Namespace) -> int:
 
     event_bus = EventBus()
     _wire_vault_sync(event_bus)
+    _wire_narrator(event_bus)
     registry = AgentRegistry()
     memory = MemorySystem()
     registry.register_default(

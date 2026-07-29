@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -83,6 +84,13 @@ def _ensure_monitor_started() -> None:
     except Exception as exc:
         print(f"[CRESSIDA] Warning: Could not start status monitor: {exc}")
 
+    try:
+        from cressida.dashboard import start_dashboard_background
+
+        start_dashboard_background()
+    except Exception as exc:
+        print(f"[CRESSIDA] Warning: Could not start dashboard: {exc}")
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -112,8 +120,49 @@ def _list_escalations(mission_id: str) -> list[str]:
 
 # ── Tools ─────────────────────────────────────────────────────────────────────
 
-# Track running missions
-_running_missions: dict[str, asyncio.Task] = {}
+# Track running missions — either a subprocess.Popen (own console window) or,
+# when a window can't be spawned, the in-process asyncio.Task fallback.
+_running_missions: dict[str, asyncio.Task | subprocess.Popen] = {}
+
+
+def _spawn_mission_window(
+    mission_id: str, brief_path: str, provider: str, ollama_model: str, project_dir: str,
+) -> subprocess.Popen | None:
+    """Launch the mission as its own OS process in a new, visible console window.
+
+    Missions used to run as an asyncio.Task inside this MCP server process —
+    invisible, and sharing this process's stdout. A dedicated window lets you
+    watch each mission's own agent-by-agent output live, and matches how the
+    rest of Cressida already treats a mission's state as disk-shared rather
+    than in-process (see core/progress.py) — a separate OS process is just
+    that same boundary made literal.
+
+    Returns the Popen handle, or None if no window could be opened (e.g.
+    non-Windows/headless), in which case the caller falls back to running the
+    mission in-process as before.
+    """
+    cmd = [
+        sys.executable, "-m", "cressida.cli", "run", brief_path,
+        "--mission-id", mission_id,
+        "--provider", provider,
+        "--ollama-model", ollama_model,
+    ]
+    if project_dir:
+        cmd += ["--project-dir", project_dir]
+
+    popen_kwargs: dict = {"cwd": str(_CRESSIDA_ROOT)}
+    if sys.platform == "win32":
+        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_CONSOLE
+    else:
+        # No universal "new terminal window" primitive off Windows; running
+        # detached at least keeps it out of this process's own stdout.
+        popen_kwargs["start_new_session"] = True
+
+    try:
+        return subprocess.Popen(cmd, **popen_kwargs)
+    except Exception as exc:
+        print(f"[CRESSIDA] Could not spawn mission window for {mission_id}: {exc}")
+        return None
 
 
 @mcp.tool()
@@ -165,15 +214,25 @@ async def run_mission(
     brief_path = out_dir / "brief.md"
     brief_path.write_text(brief, encoding="utf-8")
 
-    # Run in background — returns immediately so the MCP client doesn't time out
-    task = asyncio.create_task(
-        _background_mission(
-            mission_id, str(brief_path), provider, ollama_model, priority, project_dir
+    # Spawn the mission in its own visible console window so it can be watched
+    # live, agent by agent, instead of running silently inside this MCP server
+    # process. Falls back to the old in-process asyncio task if a window can't
+    # be opened (e.g. this MCP server itself is running headless).
+    proc = _spawn_mission_window(mission_id, str(brief_path), provider, ollama_model, project_dir)
+    if proc is not None:
+        _running_missions[mission_id] = proc
+        window_note = "Running in its own console window — watch it live there.\n"
+    else:
+        task = asyncio.create_task(
+            _background_mission(
+                mission_id, str(brief_path), provider, ollama_model, priority, project_dir
+            )
         )
-    )
-    _running_missions[mission_id] = task
+        _running_missions[mission_id] = task
+        window_note = "Running in-process (no console window could be opened).\n"
 
     return (
+        window_note +
         f"Mission started: {mission_id}\n"
         f"Output: {out_dir}\n\n"
         f"The mission is running in the background. "
@@ -255,6 +314,30 @@ async def _run_mission_bg(
         raise
     finally:
         os.chdir(prev_cwd)
+
+
+@mcp.tool()
+def mission_progress(mission_id: str) -> str:
+    """Get a detailed progress snapshot for a mission: current phase, per-task
+    status, escalations, recently-modified files, and whether it looks stalled.
+
+    Unlike mission_status (which only has data once execution_state.json
+    exists), this infers a "phase" — Research, Product Definition,
+    Architecture, BOND Gate, Planning, Implementation, Testing, Review — from
+    which milestone files are actually on disk, so you can see progress during
+    the pre-task research/PRD stretch too. Also flags "stalled": true if no
+    file in the mission directory has changed in the last 30 minutes while the
+    mission is still running.
+
+    Args:
+        mission_id: The mission ID returned by run_mission (e.g. MSN-2026-001)
+
+    Returns:
+        JSON with phase, task detail, escalations, file activity, and timing.
+    """
+    from cressida.core.progress import get_mission_progress
+
+    return json.dumps(get_mission_progress(mission_id), indent=2)
 
 
 @mcp.tool()
