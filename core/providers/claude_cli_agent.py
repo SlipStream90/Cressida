@@ -63,8 +63,8 @@ from cressida.core.providers.base import ProviderAgentBase
 
 # Strategic roles get the strongest model; workers get the faster one.
 _STRATEGIC = {AgentRole.BOND, AgentRole.INTELLIGENCE, AgentRole.LEITER, AgentRole.Q}
-_STRATEGIC_MODEL = "opus"
-_WORKER_MODEL = "sonnet"
+_STRATEGIC_MODEL = "claude-opus-5"
+_WORKER_MODEL = "claude-sonnet-5"
 
 # How long (seconds) to wait on a single CLI completion before giving up.
 _DEFAULT_TIMEOUT = float(os.environ.get("CRESSIDA_CLAUDE_CLI_TIMEOUT", "3600"))
@@ -162,23 +162,31 @@ class ClaudeCLIAgent(ProviderAgentBase):
         # both trees the mission legitimately spans: the target project and the
         # Cressida install (mission artifacts, specs, knowledge).
         target = project_dir(state)
-        text = await self._invoke(system_prompt, user_prompt, target)
+        # M's commissioning plan (orchestration/commissioner.py) can right-size a
+        # trivial mission onto the worker-tier model even for a strategic role —
+        # a per-task override beats this agent's fixed per-role default.
+        model = task.metadata.get("model_hint") or self._model
+        text = await self._invoke(system_prompt, user_prompt, target, model)
 
         self._write_output(state.mission_id, task, text)
         return text
 
     # ── CLI invocation ──────────────────────────────────────────────────────
 
-    async def _invoke(self, system_prompt: str, user_prompt: str, target: Path | None = None) -> str:
+    async def _invoke(
+        self, system_prompt: str, user_prompt: str, target: Path | None = None, model: str | None = None,
+    ) -> str:
         import asyncio
 
         # Run the blocking subprocess in a thread so we don't stall the event
         # loop and stay portable across asyncio subprocess quirks on Windows.
         return await asyncio.get_event_loop().run_in_executor(
-            None, self._invoke_blocking, system_prompt, user_prompt, target
+            None, self._invoke_blocking, system_prompt, user_prompt, target, model
         )
 
-    def _invoke_blocking(self, system_prompt: str, user_prompt: str, target: Path | None = None) -> str:
+    def _invoke_blocking(
+        self, system_prompt: str, user_prompt: str, target: Path | None = None, model: str | None = None,
+    ) -> str:
         # The agent spec can be large; pass it as a file to avoid arg limits.
         spec_file = tempfile.NamedTemporaryFile(
             mode="w", suffix=".md", delete=False, encoding="utf-8"
@@ -194,7 +202,7 @@ class ClaudeCLIAgent(ProviderAgentBase):
                 self._cli,
                 "-p",
                 "--output-format", "json",
-                "--model", self._model,
+                "--model", model or self._model,
                 "--append-system-prompt-file", spec_file.name,
                 # Grant the two trees a mission spans. Without --add-dir the CLI
                 # refuses to read anything outside its cwd, and under -p there is

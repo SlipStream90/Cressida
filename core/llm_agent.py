@@ -21,19 +21,19 @@ from cressida.orchestration.context_builder import ContextBuilder
 # BOND and strategic agents use Opus for deeper reasoning.
 # Implementation agents use Sonnet for throughput.
 _ROLE_MODEL: dict[AgentRole, str] = {
-    AgentRole.BOND:         "claude-opus-4-8",
-    AgentRole.INTELLIGENCE: "claude-opus-4-8",
-    AgentRole.LEITER:       "claude-opus-4-8",
-    AgentRole.Q:            "claude-opus-4-8",
-    AgentRole.TANNER:       "claude-sonnet-4-6",
-    AgentRole.BRANCH:       "claude-sonnet-4-6",
-    AgentRole.ROOK:         "claude-sonnet-4-6",
-    AgentRole.BOOTHROYD:    "claude-sonnet-4-6",
-    AgentRole.MONEYPENNY:   "claude-sonnet-4-6",
-    AgentRole.REVIEW:       "claude-sonnet-4-6",
+    AgentRole.BOND:         "claude-opus-5",
+    AgentRole.INTELLIGENCE: "claude-opus-5",
+    AgentRole.LEITER:       "claude-opus-5",
+    AgentRole.Q:            "claude-opus-5",
+    AgentRole.TANNER:       "claude-sonnet-5",
+    AgentRole.BRANCH:       "claude-sonnet-5",
+    AgentRole.ROOK:         "claude-sonnet-5",
+    AgentRole.BOOTHROYD:    "claude-sonnet-5",
+    AgentRole.MONEYPENNY:   "claude-sonnet-5",
+    AgentRole.REVIEW:       "claude-sonnet-5",
 }
 
-_DEFAULT_MODEL = "claude-sonnet-4-6"
+_DEFAULT_MODEL = "claude-sonnet-5"
 _MAX_TOOL_ROUNDS = 40  # safety cap on the agentic loop
 
 

@@ -49,11 +49,22 @@ def _build_mission_state(
     brief: str,
     default_priority: Priority = Priority.CRITICAL,
     target_dir: str | Path | None = None,
+    trivial: bool = False,
 ) -> MissionState:
     """Build a standard MissionState DAG.
 
         research ─┬─> methodology_research ─┬─> architecture -> bond gate ->
                   └─> product_definition ───┘   planning -> implementation -> review
+
+    ``trivial`` (see orchestration/commissioner.py) is M's mission-sizing
+    verdict: a small script/CLI/utility skips the field-survey
+    methodology_research phase entirely (architecture then only waits on
+    product_definition), and the remaining strategic tasks get
+    ``metadata["trivial"] = True`` so Dispatcher.commission() — already wired
+    into every mission via Coordinator._commission_mission — downgrades them
+    from the opus tier to the faster worker-tier model. This is the fix for a
+    one-file CLI tool otherwise running the exact same multi-document,
+    opus-tier architecture review as a production backend.
 
     LEITER's methodology_research and INTELLIGENCE's product_definition run in the
     same parallel batch: one establishes *how* the field builds this today, the
@@ -78,30 +89,34 @@ def _build_mission_state(
         description=f"Research technologies for: {brief[:200]}",
         agent=AgentRole.INTELLIGENCE,
         priority=default_priority,
-        metadata={"reads": [], "writes": [f"missions/{mission_id}/intelligence/research_report.md"]},
-    ))
-    state.add_task(Task(
-        id="methodology_research",
-        name="Methodology research",
-        description=(
-            "Search the open internet for the CURRENT state of the art for building this mission. "
-            "Read primary sources (official docs, changelogs, release notes, advisories) with fetch_url — "
-            "search snippets alone are not enough to cite a claim. Establish current versions and release "
-            "dates for every dependency, identify deprecated or superseded approaches and what replaced "
-            "them, extract the idiomatic patterns and project structure to follow, and record known "
-            "pitfalls. Cite every claim with a URL and date; label anything unverified as [UNVERIFIED]."
-        ),
-        agent=AgentRole.LEITER,
-        priority=default_priority,
-        depends_on=["research"],
         metadata={
-            "reads": [f"missions/{mission_id}/intelligence/research_report.md"],
-            "writes": [
-                f"missions/{mission_id}/intelligence/methodology_brief.md",
-                f"missions/{mission_id}/intelligence/sources.md",
-            ],
+            "reads": [], "writes": [f"missions/{mission_id}/intelligence/research_report.md"],
+            "trivial": trivial,
         },
     ))
+    if not trivial:
+        state.add_task(Task(
+            id="methodology_research",
+            name="Methodology research",
+            description=(
+                "Search the open internet for the CURRENT state of the art for building this mission. "
+                "Read primary sources (official docs, changelogs, release notes, advisories) with fetch_url — "
+                "search snippets alone are not enough to cite a claim. Establish current versions and release "
+                "dates for every dependency, identify deprecated or superseded approaches and what replaced "
+                "them, extract the idiomatic patterns and project structure to follow, and record known "
+                "pitfalls. Cite every claim with a URL and date; label anything unverified as [UNVERIFIED]."
+            ),
+            agent=AgentRole.LEITER,
+            priority=default_priority,
+            depends_on=["research"],
+            metadata={
+                "reads": [f"missions/{mission_id}/intelligence/research_report.md"],
+                "writes": [
+                    f"missions/{mission_id}/intelligence/methodology_brief.md",
+                    f"missions/{mission_id}/intelligence/sources.md",
+                ],
+            },
+        ))
     state.add_task(Task(
         id="product_definition",
         name="Product definition",
@@ -117,47 +132,62 @@ def _build_mission_state(
             ],
         },
     ))
+    architecture_reads = [
+        f"missions/{mission_id}/intelligence/PRD.md",
+        f"missions/{mission_id}/intelligence/Roadmap.md",
+    ]
+    architecture_depends_on = ["product_definition"]
+    architecture_description = "Design system architecture, API contracts, and data models."
+    if not trivial:
+        architecture_reads.append(f"missions/{mission_id}/intelligence/methodology_brief.md")
+        architecture_depends_on.append("methodology_research")
+        architecture_description += (
+            " Follow the methodology brief: use the versions, patterns, and project structure it "
+            "verified, and avoid the approaches it flags as deprecated."
+        )
     state.add_task(Task(
         id="architecture",
         name="Architecture design",
-        description=(
-            "Design system architecture, API contracts, and data models. "
-            "Follow the methodology brief: use the versions, patterns, and project structure it "
-            "verified, and avoid the approaches it flags as deprecated."
-        ),
+        description=architecture_description,
         agent=AgentRole.Q,
         priority=default_priority,
-        depends_on=["product_definition", "methodology_research"],
+        depends_on=architecture_depends_on,
         metadata={
-            "reads": [
-                f"missions/{mission_id}/intelligence/PRD.md",
-                f"missions/{mission_id}/intelligence/Roadmap.md",
-                f"missions/{mission_id}/intelligence/methodology_brief.md",
-            ],
+            "reads": architecture_reads,
+            "trivial": trivial,
             "writes": [f"missions/{mission_id}/ARCHITECTURE.md"],
         },
     ))
-    state.add_task(Task(
-        id="bond_approve_plan",
-        name="BOND: approve plan",
-        description=(
+    bond_reads = [
+        f"missions/{mission_id}/intelligence/research_report.md",
+        f"missions/{mission_id}/intelligence/PRD.md",
+        f"missions/{mission_id}/ARCHITECTURE.md",
+    ]
+    bond_description = (
+        "Review the research, PRD, and architecture artifacts. "
+        "Use approve_phase to approve the plan or reject_phase to block it. "
+        "Use escalate if confidence is below 0.7."
+    )
+    if not trivial:
+        bond_reads.insert(1, f"missions/{mission_id}/intelligence/methodology_brief.md")
+        bond_description = (
             "Review the research, methodology brief, PRD, and architecture artifacts. "
             "Check that the architecture actually follows the verified methodology and does not "
             "rely on approaches the brief flags as deprecated or unverified. "
             "Use approve_phase to approve the plan or reject_phase to block it. "
             "Use escalate if confidence is below 0.7."
-        ),
+        )
+    state.add_task(Task(
+        id="bond_approve_plan",
+        name="BOND: approve plan",
+        description=bond_description,
         agent=AgentRole.BOND,
         priority=default_priority,
         depends_on=["architecture"],
         metadata={
-            "reads": [
-                f"missions/{mission_id}/intelligence/research_report.md",
-                f"missions/{mission_id}/intelligence/methodology_brief.md",
-                f"missions/{mission_id}/intelligence/PRD.md",
-                f"missions/{mission_id}/ARCHITECTURE.md",
-            ],
+            "reads": bond_reads,
             "writes": [f"missions/{mission_id}/bond_decisions/"],
+            "trivial": trivial,
         },
     ))
     state.add_task(Task(
@@ -175,27 +205,36 @@ def _build_mission_state(
             "writes": [f"missions/{mission_id}/backlog.json"],
         },
     ))
-    state.add_task(Task(
-        id="implementation",
-        name="Implementation",
-        description=(
+    implementation_reads = [
+        f"missions/{mission_id}/intelligence/PRD.md",
+        f"missions/{mission_id}/ARCHITECTURE.md",
+        f"missions/{mission_id}/backlog.json",
+    ]
+    implementation_description = (
+        "Implement the code based on the PRD, architecture, and backlog. "
+        "Write all source files, tests, and configuration files as specified. "
+        "Use the write_file tool to create each file. "
+        f"Write all source files under the target project directory: {target}"
+    )
+    if not trivial:
+        implementation_reads.insert(1, f"missions/{mission_id}/intelligence/methodology_brief.md")
+        implementation_description = (
             "Implement the code based on the PRD, architecture, and backlog. "
             "Write all source files, tests, and configuration files as specified. "
             "Use the versions, patterns, and idioms established in the methodology brief — "
             "do not fall back on older patterns it marks as superseded. "
             "Use the write_file tool to create each file. "
             f"Write all source files under the target project directory: {target}"
-        ),
+        )
+    state.add_task(Task(
+        id="implementation",
+        name="Implementation",
+        description=implementation_description,
         agent=AgentRole.BRANCH,
         priority=default_priority,
         depends_on=["planning"],
         metadata={
-            "reads": [
-                f"missions/{mission_id}/intelligence/PRD.md",
-                f"missions/{mission_id}/intelligence/methodology_brief.md",
-                f"missions/{mission_id}/ARCHITECTURE.md",
-                f"missions/{mission_id}/backlog.json",
-            ],
+            "reads": implementation_reads,
             # The mission-local implementation notes stay here so REVIEW's reads
             # keep working; actual source files go to the target project via
             # write_file, which passes absolute paths through untouched.
@@ -246,8 +285,11 @@ async def run_mission(args: argparse.Namespace) -> int:
         timeout=getattr(args, "timeout", 0),
     )
 
+    from cressida.orchestration.commissioner import is_trivial_mission
+    trivial = await is_trivial_mission(mission_id, brief, registry)
+
     state = _build_mission_state(
-        mission_id, brief, target_dir=getattr(args, "project_dir", None)
+        mission_id, brief, target_dir=getattr(args, "project_dir", None), trivial=trivial,
     )
 
     coordinator = Coordinator(registry, event_bus, memory)

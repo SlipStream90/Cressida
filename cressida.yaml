@@ -38,12 +38,19 @@ agents:
   provider: "auto"
 
   model_overrides:
+    # NOTE: like the obsidian: block below, this file is documentation only for
+    # the anthropic/claude_cli providers — nothing parses cressida.yaml's
+    # model_overrides.anthropic. The real, live per-role model maps are
+    # core/llm_agent.py's _ROLE_MODEL (native "anthropic" provider) and
+    # core/providers/claude_cli_agent.py's _STRATEGIC_MODEL/_WORKER_MODEL (the
+    # "claude_cli" provider, the one actually used when no API key is set).
+    # Keep this block in sync with those if you change either.
     anthropic:
-      BOND:         "claude-opus-4-8"
-      INTELLIGENCE: "claude-opus-4-8"
-      LEITER:       "claude-opus-4-8"
-      Q:            "claude-opus-4-8"
-      default:      "claude-sonnet-4-6"
+      BOND:         "claude-opus-5"
+      INTELLIGENCE: "claude-opus-5"
+      LEITER:       "claude-opus-5"
+      Q:            "claude-opus-5"
+      default:      "claude-sonnet-5"
     openai:
       BOND:         "gpt-4o"
       INTELLIGENCE: "gpt-4o"
