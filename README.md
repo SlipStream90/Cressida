@@ -149,10 +149,12 @@ Before any agent is invoked, **M** commissions the mission. The `Coordinator` ru
 
 - **Which agent** owns it (via the router map — no LLM call needed for the common case).
 - **Which tools** to expose — the smallest sufficient toolset. Every tool schema dropped is input tokens saved on *every* round of that agent's agentic loop. A `Q` architecture task never sees `run_shell`; a read-only research task never sees `write_file`.
-- **Which skills** to load — none by default, added only on a clear keyword match (e.g. a charting task pulls in `dataviz`).
+- **Which skills** to load — added on a clear keyword match (e.g. a charting task pulls in `dataviz`) *and* unconditionally for every code-writing task (`BRANCH`, `ROOK`, `BOOTHROYD`, `REVIEW`), which always get **`ponytail`** — anti-over-engineering guidance (YAGNI, stdlib-first, simplest-thing-that-works) — regardless of whether the brief happens to say "simplify."
 - **Which model** — the cheapest tier that satisfies the task's reasoning demand.
 
 The commission is written back onto each `Task.metadata` (`toolset`, `skills`, `model_hint`, `skip`), so `LLMAgent` picks it up automatically — `select_tools_for_task()` sends only the pruned tools, and it **fails open** (full toolset) whenever a selection is uncertain, so a commission never blocks a mission.
+
+**Mission-level sizing** (`orchestration/commissioner.py`) runs one short, cheap classification call *before* the task graph is even built: a genuinely trivial brief (a single small script/CLI/utility) skips the field-survey `methodology_research` phase entirely and marks its remaining strategic tasks so they run on the faster planner-tier model instead of the executor tier — a one-file CLI tool no longer runs the identical multi-document, top-tier-model pipeline as a production backend. A misclassification always falls back to the full pipeline, never the reverse.
 
 Each plan is recorded to strategic memory and stored as a subnode under the **Logs** branch in Obsidian, alongside an estimate of the tool schemas and agents it avoided activating.
 
@@ -187,17 +189,26 @@ Everything is best-effort: with no LLM key, no reward records, or no vault, refl
 
 CRESSIDA is not tied to any single LLM. Set whichever API key you have and it auto-detects:
 
-| Provider | Models (strategic / impl) | What to set |
+| Provider | Models | What to set |
 |---|---|---|
-| Anthropic | claude-opus-4-8 / claude-sonnet-4-6 | `ANTHROPIC_API_KEY` |
+| Anthropic / Claude Code CLI | see per-role tiering below | `ANTHROPIC_API_KEY`, or nothing if `claude` is installed & logged in |
 | OpenAI | gpt-4o / gpt-4o-mini | `OPENAI_API_KEY` |
 | Google Gemini | gemini-1.5-pro / gemini-1.5-flash | `GEMINI_API_KEY` |
 | Groq | llama-3.3-70b-versatile / llama-3.1-8b-instant | `GROQ_API_KEY` |
-| **Claude Code CLI** | whatever your `claude` login provides | **nothing — no API key**, just `claude` installed & logged in |
 | **opencode CLI** | whatever your opencode auth provides | **nothing — no API key**, just `opencode` installed & logged in |
 | Ollama | any local model (default: llama3.2) | Ollama running at localhost:11434 (no key) |
 
 If no key is set, CRESSIDA falls back to the `claude` CLI, then `opencode`, then Ollama — so a machine that already runs Claude Code or opencode needs no extra credentials.
+
+**Per-role model tier (Anthropic-backed providers, `core/model_tiers.py` — single source of truth for both the native and CLI providers):**
+
+| Tier | Roles | Model | Why |
+|---|---|---|---|
+| Fast | `M`, `R` | `claude-haiku-4-5-20251001` | one-shot classification / post-hoc distillation, off the critical path |
+| Planner | `INTELLIGENCE`, `LEITER`, `Q`, `BOND`, `TANNER` | `claude-sonnet-5` | output is gated (BOND) or read by the next agent, not shipped as-is |
+| Executor | `BRANCH`, `ROOK`, `BOOTHROYD`, `MONEYPENNY`, `REVIEW` | `claude-opus-5` | output ships as the mission's actual deliverable |
+
+M's mission-sizing (above) can further downgrade a planner-tier task to the fast tier for trivial missions via `Task.metadata["model_hint"]`.
 
 Override detection at any time:
 
@@ -300,6 +311,31 @@ curl http://localhost:7437/health   # {"ok": true}
 
 Stalled tasks (no progress for 30 min) are detected automatically. Post-mortems are written to `memory/postmortems/` and INTELLIGENCE synthesises lessons into `knowledge/lessons.md`.
 
+### Watch a mission live
+
+Every `run_mission` MCP call spawns the mission in its **own console window** (a real OS subprocess, not silent in-process execution), and prints a running narration as it works — one line per task lifecycle event, no polling required:
+
+```
+[12:18:42] [RUN]  Mission mission_20260729_120842 started - Build a CSV to JSON CLI tool
+[12:18:42] [....] INTELLIGENCE -> research starting
+[12:20:57] [OK]   INTELLIGENCE -> research done (134.6s)
+...
+```
+
+For a birds-eye view across every mission at once, a local dashboard runs alongside the MCP server (also launchable standalone):
+
+```bash
+cressida dashboard --port 7438   # http://localhost:7438
+```
+
+It auto-refreshes every 2.5s, showing each mission's phase stepper, current agent, task list with inline error text on failure, recent file activity, and a stall flag — all backed by `core/progress.py`, the same disk-polled state the `mission_progress` MCP tool exposes:
+
+```
+mission_progress(mission_id="mission_20260729_120842")   # phase, tasks, files, stalled: bool
+```
+
+`mission_progress` infers the mission's phase from which milestone files actually exist on disk (works even before `execution_state.json` is written, during the pre-task research/PRD stretch), so it's the tool to reach for over `mission_status` when you actually want to know *what's happening right now*.
+
 ---
 
 ## Project structure
@@ -375,6 +411,8 @@ After architecture is complete, BOND runs `bond_approve_plan` as a DAG task. It 
 - **escalate** — execution halts; writes an escalation JSON for human review; resume with `cressida resolve-escalation`
 
 This is a hard gate, not advisory. Nothing downstream runs without BOND's sign-off.
+
+**Implementation is verified, not just trusted**: after `BRANCH` runs, the executor checks that at least one file under the mission or target-project directory actually changed since the task started. A sandboxed CLI subprocess that gets its write access denied returns normal-looking text — it just narrates the code instead of saving it — which used to get silently recorded as a successful implementation. That case is now marked FAILED with an explicit error instead.
 
 ---
 

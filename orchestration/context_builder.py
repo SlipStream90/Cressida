@@ -42,6 +42,7 @@ class ContextBuilder:
         task_description: str,
         objectives: list[str] | None = None,
         target_dir: str | Path | None = None,
+        skills: list[str] | None = None,
     ) -> str:
         sections: list[str] = []
         sections.append(f"# MISSION: {mission_id}")
@@ -58,6 +59,16 @@ class ContextBuilder:
             sections.append("## Objectives\n" + "\n".join(f"- {o}" for o in objectives))
         sections.append(f"## Task: {task_id}\n{task_description}")
         sections.append(f"## Agent: {agent_role.value}")
+
+        # Skills M's commissioner (orchestration/dispatcher.py) selected for this
+        # task. Only meaningful for providers backed by a real Claude Code session
+        # (the claude_cli provider) that can invoke the Skill tool; harmless,
+        # ignorable text for API-only providers that have no such tool.
+        if skills:
+            sections.append(
+                "## Skills\nInvoke these skills via your Skill tool before starting, "
+                "if available: " + ", ".join(skills)
+            )
 
         # The constitution governs *how* every agent works, so it is injected
         # ahead of the role spec and outranks it. Best-effort: a missing file

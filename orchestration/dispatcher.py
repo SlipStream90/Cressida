@@ -59,6 +59,11 @@ _NON_SHELL_ROLES = {
 }
 
 # Skill hints: keyword in the task → skill worth loading. Empty match ⇒ no skill.
+# Roles whose output is source code (not a plan, a decision, or a document) —
+# ponytail (anti-over-engineering: YAGNI, stdlib-first, simplest-thing-that-works)
+# always applies to these regardless of what keywords the brief happens to use.
+_CODE_WRITING_ROLES = {AgentRole.BRANCH, AgentRole.ROOK, AgentRole.BOOTHROYD, AgentRole.REVIEW}
+
 _SKILL_HINTS: dict[str, str] = {
     "banner": "banner-design",
     "logo": "design",
@@ -146,7 +151,7 @@ class Dispatcher:
                 continue
 
             tools = self._select_tools(role, task)
-            skills = self._select_skills(task)
+            skills = self._select_skills(task, role)
             model = self._select_model(role, task)
             commission = TaskCommission(
                 task_id=task.id,
@@ -225,7 +230,7 @@ class Dispatcher:
         selected = [t for t in selected if t in allowed]
         return selected or sorted(allowed)
 
-    def _select_skills(self, task: Task) -> list[str]:
+    def _select_skills(self, task: Task, role: AgentRole | None = None) -> list[str]:
         haystack = f"{task.name} {task.description}".lower()
         tags = [str(t).lower() for t in task.metadata.get("tags", [])]
         hits: list[str] = []
@@ -233,6 +238,13 @@ class Dispatcher:
             if keyword in haystack or keyword in tags:
                 if skill not in hits:
                     hits.append(skill)
+        # ponytail's own trigger is "ANY coding task: writing, adding, refactoring,
+        # fixing, reviewing, or designing code" - every implementation/review role
+        # qualifies unconditionally, not just on a keyword match, so it isn't
+        # bottlenecked on _SKILL_HINTS text-matching a brief that never says
+        # "simplify" or "yagni" out loud.
+        if role in _CODE_WRITING_ROLES and "ponytail" not in hits:
+            hits.append("ponytail")
         return hits
 
     def _select_model(self, role: AgentRole, task: Task) -> str | None:

@@ -70,6 +70,7 @@ class ProviderAgentBase(Agent):
             task_description=task.description,
             objectives=state.objectives if state.objectives else None,
             target_dir=project_dir(state),
+            skills=task.metadata.get("skills"),
         )
 
     def _write_output(self, mission_id: str, task: Task, content: str) -> None:

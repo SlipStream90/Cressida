@@ -92,6 +92,7 @@ class LLMAgent(Agent):
             task_description=task.description,
             objectives=state.objectives if state.objectives else None,
             target_dir=project_dir(state),
+            skills=task.metadata.get("skills"),
         )
 
         # M (the dispatcher) may have pruned the toolset for this task to cut
