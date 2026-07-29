@@ -7,7 +7,7 @@ CRESSIDA takes a plain-English brief and runs a full software engineering pipeli
 The pipeline:
 
 ```
-research ─┬─> methodology research (LETTER) ─┬─> architecture ─> BOND gate ─>
+research ─┬─> methodology research (LEITER) ─┬─> architecture ─> BOND gate ─>
           └─> product definition ────────────┘   planning ─> implementation ─> review
 ```
 
@@ -96,7 +96,7 @@ Verify inside Claude Code by calling the `cressida_status` tool, then kick off w
 | **R** | Records and learning curator. Runs *after* every mission and distils what happened into per-agent playbooks and reusable skills, then consolidates them. Those lessons are injected back into agents' future prompts — this is the self-improvement layer. |
 | **BOND** | Mission director and autonomous gate. Reviews architecture before planning proceeds; can reject a plan or escalate to a human. |
 | **INTELLIGENCE** | Research and product definition. Produces market research, PRDs, and roadmaps. |
-| **LETTER** | External intelligence. As soon as the mission is drafted, goes out to the open internet and reads primary sources to establish how this is actually built *today* — current versions, idiomatic patterns, deprecated approaches, known pitfalls — and writes a cited methodology brief that Q's architecture and BRANCH's implementation are held to. |
+| **LEITER** | External intelligence. As soon as the mission is drafted, goes out to the open internet and reads primary sources to establish how this is actually built *today* — current versions, idiomatic patterns, deprecated approaches, known pitfalls — and writes a cited methodology brief that Q's architecture and BRANCH's implementation are held to. |
 | **Q** | Architecture. Converts the PRD into a system design, API contracts, and data models. |
 | **TANNER** | Planning. Builds the dependency graph, finds the parallelisable batches and critical path, and populates the backlog. |
 | **BRANCH** | Backend implementation. APIs, services, database layer. |
@@ -105,9 +105,9 @@ Verify inside Claude Code by calling the `cressida_status` tool, then kick off w
 | **MONEYPENNY** | Knowledge operations and runtime tracking. Keeps the mission dossier up to date. |
 | **REVIEW** | Code review, testing, and coverage audit. Final quality gate before mission close. |
 
-Tasks run in parallel wherever the dependency graph allows — LETTER's methodology research runs alongside INTELLIGENCE's product definition, and Q waits on both. BOND sits as a mandatory checkpoint between architecture and planning — if BOND rejects the plan, all downstream tasks are blocked.
+Tasks run in parallel wherever the dependency graph allows — LEITER's methodology research runs alongside INTELLIGENCE's product definition, and Q waits on both. BOND sits as a mandatory checkpoint between architecture and planning — if BOND rejects the plan, all downstream tasks are blocked.
 
-LETTER exists because a model's priors go stale. It is the one agent required to cite a fetched URL and date for every claim, and to mark anything it could not verify as `[UNVERIFIED]` — so the architecture is designed against the ecosystem as it is now, not as it was at training time. Web search uses `BRAVE_API_KEY` when set and falls back to DuckDuckGo; `fetch_url` reads the pages themselves.
+LEITER exists because a model's priors go stale. It is the one agent required to cite a fetched URL and date for every claim, and to mark anything it could not verify as `[UNVERIFIED]` — so the architecture is designed against the ecosystem as it is now, not as it was at training time. Web search uses `BRAVE_API_KEY` when set and falls back to DuckDuckGo; `fetch_url` reads the pages themselves.
 
 ---
 
@@ -218,13 +218,13 @@ pip install -e ".[anthropic]"    # framework + a provider (or .[openai] / .[gemi
 
 `pyyaml`, `aiohttp`, and `mcp` come in automatically as core dependencies (needed for the daemon scheduler and the MCP server).
 
-Optional (for web research by LETTER and INTELLIGENCE):
+Optional (for web research by LEITER and INTELLIGENCE):
 
 ```bash
 export BRAVE_API_KEY=...         # uses Brave Search; falls back to DuckDuckGo
 ```
 
-Search works keyless via the DuckDuckGo fallback, but a Brave key makes it reliable — worth setting, since LETTER's whole job depends on it. Page reading (`fetch_url`) needs no key.
+Search works keyless via the DuckDuckGo fallback, but a Brave key makes it reliable — worth setting, since LEITER's whole job depends on it. Page reading (`fetch_url`) needs no key.
 
 ---
 
@@ -361,7 +361,7 @@ autonomy:
 | `CRESSIDA_MISSIONS_DIR` | Put mission artifacts elsewhere — e.g. outside a repo |
 | `CRESSIDA_PROJECT_DIR` | Default target project for missions |
 | `CRESSIDA_OBSIDIAN_VAULT` | Vault path for the graph mirror (optional — no-ops if unset) |
-| `BRAVE_API_KEY` | Reliable web search for LETTER / INTELLIGENCE |
+| `BRAVE_API_KEY` | Reliable web search for LEITER / INTELLIGENCE |
 | `CRESSIDA_CLAUDE_CLI` | Explicit path to the `claude` binary if it isn't on `PATH` |
 
 ---
