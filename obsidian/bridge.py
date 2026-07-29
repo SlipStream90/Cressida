@@ -187,7 +187,10 @@ class ObsidianBridge:
         "knowledge":    "Knowledge",
         "mission":      "Mission Memory",
         "logs":         "Logs",
-        "decisions":    "Decisions",
+        # "Decision Log", not "Decisions" — a mission's own architecture decisions
+        # already live in Knowledge/decisions.md; a second "Decisions.md" note
+        # would collide on basename and make [[Decisions]] links ambiguous.
+        "decisions":    "Decision Log",
         "escalations":  "Escalations",
         "postmortems":  "Post-Mortems",
     }
@@ -300,12 +303,19 @@ class ObsidianBridge:
         tags: list[str] | None = None,
         agent: str = "",
     ) -> Path:
-        """Write a mission output note to Vault/Cressida/Missions/<id>/<title>.md."""
+        """Write a mission output note to Vault/Missions/<id>/<mission_id> — <title>.md.
+
+        The filename is prefixed with mission_id so it can never collide with an
+        agent or knowledge note of the same generic title (e.g. "Architecture",
+        "Review") — Obsidian resolves [[links]] by basename vault-wide, and an
+        unqualified name would silently hijack links meant for the other note.
+        """
         mission_dir = self.missions_dir() / mission_id
         mission_dir.mkdir(parents=True, exist_ok=True)
 
         fm: dict[str, Any] = {
             "mission_id": mission_id,
+            "title": title,
             "created": datetime.now().strftime("%Y-%m-%d %H:%M"),
             "tags": ["cressida", "mission", mission_id.lower()] + (tags or []),
         }
@@ -313,7 +323,8 @@ class ObsidianBridge:
             fm["agent"] = agent
 
         note = _render_note(fm, content)
-        path = mission_dir / f"{title}.md"
+        safe_title = _sanitize_filename(f"{mission_id} — {title}")
+        path = mission_dir / f"{safe_title}.md"
         path.write_text(note, encoding="utf-8")
         return path
 
@@ -345,11 +356,20 @@ class ObsidianBridge:
         return path
 
     def sync_knowledge(self, knowledge_dir: Path) -> None:
-        """Mirror cressida/knowledge/*.md into Vault/Cressida/Knowledge/."""
+        """Mirror cressida/knowledge/*.md into Vault/Knowledge/Source/.
+
+        Lands in a "Source" subfolder, not directly in Knowledge/, because the
+        raw framework files (architecture.md, decisions.md, lessons.md,
+        patterns.md) share basenames with hand-curated Obsidian notes that live
+        directly under Knowledge/ — copying straight into Knowledge/ would
+        silently clobber the curated notes on every mission task completion.
+        """
         if not knowledge_dir.exists():
             return
+        dst_dir = self.knowledge_dir() / "Source"
+        dst_dir.mkdir(parents=True, exist_ok=True)
         for src in knowledge_dir.glob("*.md"):
-            dst = self.knowledge_dir() / src.name
+            dst = dst_dir / src.name
             shutil.copy2(src, dst)
 
     def sync_mission_outputs(self, mission_id: str, missions_base: Path) -> None:
@@ -358,7 +378,13 @@ class ObsidianBridge:
         if not src_dir.exists():
             return
 
-        # Map source filename → vault title
+        # Map source filename → vault title. Titles are generic ("Architecture",
+        # "Review", ...) and *will* collide with agent/knowledge notes that share
+        # the same basename elsewhere in the vault — Obsidian resolves [[links]]
+        # by basename across the whole vault, so an unqualified "Architecture.md"
+        # here silently steals every [[Architecture]] link meant for the agent
+        # roster's knowledge note. write_artifact() prefixes with mission_id to
+        # keep every mission's notes globally unique.
         file_map = {
             "dossier.md":              "Brief",
             "ARCHITECTURE.md":         "Architecture",
@@ -370,6 +396,9 @@ class ObsidianBridge:
             "intelligence/PRD.md":     "PRD",
             "intelligence/research_report.md": "Research Report",
             "intelligence/Roadmap.md": "Roadmap",
+            "intelligence/methodology_brief.md": "Methodology Brief",
+            "intelligence/sources.md": "Sources",
+            "playwright_report.md":    "Playwright Report",
         }
         for rel, title in file_map.items():
             src = src_dir / rel
@@ -443,32 +472,40 @@ class ObsidianBridge:
     # ── Event-driven vault sync ───────────────────────────────────────────────
 
     def subscribe_to_events(self, event_bus: Any, missions_base: Path, knowledge_dir: Path) -> None:
-        """Subscribe to TASK_COMPLETED events to auto-sync outputs to vault."""
-        from cressida.core.events import EventType
+        """Subscribe to TASK_COMPLETED / MISSION_COMPLETED so every run's outputs
+        sync to the vault (or its local markdown fallback) with no manual step."""
+        from cressida.core.events import Event, EventType
 
-        async def _on_event(event_type: EventType, data: dict) -> None:
+        async def _on_event(event: Event) -> None:
             try:
-                if event_type == EventType.TASK_COMPLETED:
-                    mission_id = data.get("mission_id", "")
-                    if mission_id:
-                        self.sync_mission_outputs(mission_id, missions_base)
-                        self.sync_knowledge(knowledge_dir)
-
-                elif event_type == EventType.MISSION_COMPLETED:
-                    mission_id = data.get("mission_id", "")
-                    if mission_id:
-                        self.sync_mission_outputs(mission_id, missions_base)
-                        self.sync_knowledge(knowledge_dir)
-                        self._write_mission_index(mission_id, missions_base)
+                mission_id = event.data.get("mission_id", "")
+                if not mission_id:
+                    return
+                self.sync_mission_outputs(mission_id, missions_base)
+                self.sync_knowledge(knowledge_dir)
+                if event.type == EventType.MISSION_COMPLETED:
+                    self._write_mission_index(mission_id, missions_base)
             except Exception as exc:
                 print(f"[ObsidianBridge] event sync error: {exc}")
 
         event_bus.subscribe(EventType.TASK_COMPLETED, _on_event)
+        event_bus.subscribe(EventType.MISSION_COMPLETED, _on_event)
 
     def _write_mission_index(self, mission_id: str, missions_base: Path) -> None:
-        """Write a summary index note for a completed mission."""
+        """Write a summary index note for a completed mission.
+
+        Named "<mission_id> Artifacts.md", not the bare "Index.md" this used to
+        be — every mission would otherwise write a file with the exact same
+        basename, and Obsidian resolves [[Index]] links by basename across the
+        whole vault, so only the most-recently-synced mission's index would ever
+        be reachable. ("Artifacts" also avoids colliding with any hand-curated
+        "<mission_id> Index" overview note that names the mission itself.)
+        """
         mission_dir = self.missions_dir() / mission_id
-        files = sorted(mission_dir.glob("*.md")) if mission_dir.exists() else []
+        title = f"{mission_id} Artifacts"
+        files = sorted(
+            f for f in mission_dir.glob("*.md") if f.stem != title
+        ) if mission_dir.exists() else []
         links = "\n".join(f"- [[{f.stem}]]" for f in files)
         body = f"# {mission_id}\n\n**Completed:** {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n## Artifacts\n\n{links}\n"
         fm = {
@@ -476,7 +513,7 @@ class ObsidianBridge:
             "created": datetime.now().strftime("%Y-%m-%d %H:%M"),
             "tags": ["cressida", "mission-index"],
         }
-        idx = self.missions_dir() / mission_id / "Index.md"
+        idx = self.missions_dir() / mission_id / f"{title}.md"
         idx.write_text(_render_note(fm, body), encoding="utf-8")
 
 
@@ -486,16 +523,29 @@ _bridge: ObsidianBridge | None = None
 
 
 def get_bridge() -> ObsidianBridge | None:
-    """Return the active ObsidianBridge, or None if Obsidian is not configured."""
+    """Return the active bridge — a real Obsidian vault if configured, otherwise a
+    plain-markdown export folder so non-Obsidian users still get the same
+    per-mission notes and knowledge sync, just as .md files on disk.
+
+    Returns None only if even the local fallback folder can't be created.
+    """
     global _bridge
     if _bridge is not None:
         return _bridge
     vault = os.environ.get("CRESSIDA_OBSIDIAN_VAULT", "")
-    if vault:
-        try:
-            _bridge = ObsidianBridge(vault_path=vault)
-        except Exception:
-            pass
+    if not vault:
+        from cressida.core.paths import default_vault_dir
+        vault = str(default_vault_dir())
+    # CRESSIDA_OBSIDIAN_FOLDER overrides the "Cressida" subfolder Cressida
+    # normally owns inside the vault. Set it to "" to write flat at the vault
+    # root instead — e.g. when the vault's Missions/Knowledge/Agents folders
+    # were already established at the top level before Cressida was wired in.
+    folder = os.environ.get("CRESSIDA_OBSIDIAN_FOLDER")
+    kwargs = {"cressida_folder": folder} if folder is not None else {}
+    try:
+        _bridge = ObsidianBridge(vault_path=vault, **kwargs)
+    except Exception:
+        pass
     return _bridge
 
 

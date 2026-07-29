@@ -72,6 +72,16 @@ def missions_root() -> Path:
     return _env_path("CRESSIDA_MISSIONS_DIR") or (cressida_home() / "missions")
 
 
+def default_vault_dir() -> Path:
+    """Fallback markdown export dir used when no Obsidian vault is configured.
+
+    Same folder layout and plain-markdown-with-frontmatter format as a real
+    Obsidian vault (see cressida.obsidian.bridge) — readable with any text
+    editor, just not opened inside the Obsidian app.
+    """
+    return _env_path("CRESSIDA_VAULT_DIR") or (cressida_home() / "vault")
+
+
 def mission_dir(mission_id: str) -> Path:
     return missions_root() / mission_id
 

@@ -16,6 +16,11 @@ Your value is recency and evidence. A confident answer from memory is worth noth
 - Cite every claim with a URL and the date of the source
 - Produce methodology_brief.md and sources.md
 
+## Tooling Rules
+- Search and fetch external resources using headless Firefox, not a plain HTTP fetch — many primary sources (docs sites, changelogs, issue trackers) require JS rendering or block non-browser clients
+- Prefer this for every live lookup: search engine queries, doc pages, release notes, benchmark write-ups, GitHub issues/discussions
+- If headless Firefox is unavailable or a fetch through it fails, fall back per Failure Handling and mark the result `[UNVERIFIED]`
+
 ## Inputs
 - Mission brief from CRESSIDA COMMAND
 - research_report.md from INTELLIGENCE (the technology shortlist to go deep on)

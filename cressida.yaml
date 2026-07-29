@@ -67,9 +67,23 @@ agents:
       host:         "http://localhost:11434"
 
 obsidian:
-  # Set vault_path to your vault directory (or use CRESSIDA_OBSIDIAN_VAULT env var)
-  vault_path: "C:/Users/adity/Desktop/THEIA"
-  cressida_folder: "Cressida"      # subfolder inside the vault Cressida owns
+  # NOTE: this file is documentation only — nothing in cressida/ actually parses
+  # cressida.yaml's obsidian: block. The real, live config is the two env vars
+  # below (read by cressida.obsidian.bridge.get_bridge()). Keep them in sync
+  # with what you write here.
+  #
+  # vault_path must be the folder that actually contains .obsidian/ — not a
+  # parent of it. Pointing one level too shallow silently creates a sibling
+  # folder Obsidian never displays, which is exactly what happened here before
+  # this was corrected.
+  #   CRESSIDA_OBSIDIAN_VAULT=C:/Users/adity/Desktop/THEIA/THEIA
+  #   CRESSIDA_OBSIDIAN_FOLDER=            (empty — write flat at vault root,
+  #                                          matching this vault's existing
+  #                                          Agents/Missions/Knowledge/System
+  #                                          layout instead of nesting a
+  #                                          "Cressida" subfolder inside it)
+  vault_path: "C:/Users/adity/Desktop/THEIA/THEIA"
+  cressida_folder: ""              # "" = flat at vault root; see CRESSIDA_OBSIDIAN_FOLDER above
   inbox_folder: "Inbox"            # drop .md briefs here to trigger missions
   poll_interval_seconds: 15        # how often to check the inbox folder
 

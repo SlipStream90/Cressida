@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from cressida.core.events import EventBus, EventType
-from cressida.core.paths import mission_dir, missions_root, project_dir
+from cressida.core.paths import knowledge_dir, mission_dir, missions_root, project_dir
 from cressida.core.registry import AgentRegistry
 from cressida.core.types import AgentRole, MissionState, MissionStatus, Priority, Task, TaskStatus
 from cressida.evaluation.feedback_collector import FeedbackCollector
@@ -17,6 +17,20 @@ from cressida.evaluation.reward_store import RewardStore
 from cressida.memory.system import MemorySystem
 from cressida.orchestration.coordinator import Coordinator
 from cressida.state.shared_state import SharedState
+
+
+def _wire_vault_sync(event_bus: EventBus) -> None:
+    """Subscribe the Obsidian/markdown bridge to task and mission completion so
+    every run's outputs land in the vault (or the local markdown fallback)
+    without a manual sync step."""
+    try:
+        from cressida.obsidian.bridge import get_bridge
+
+        bridge = get_bridge()
+        if bridge is not None:
+            bridge.subscribe_to_events(event_bus, missions_root(), knowledge_dir())
+    except Exception as e:
+        print(f"[commands] vault sync wiring skipped: {e}")
 
 
 def _build_mission_state(
@@ -210,6 +224,7 @@ async def run_mission(args: argparse.Namespace) -> int:
     mission_id = getattr(args, "mission_id", None) or f"mission_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
     event_bus = EventBus()
+    _wire_vault_sync(event_bus)
     registry = AgentRegistry()
     memory = MemorySystem()
     registry.register_default(
@@ -267,6 +282,7 @@ async def run_daemon(args: argparse.Namespace) -> int:
     status_file = missions_dir / "status.json"
 
     event_bus = EventBus()
+    _wire_vault_sync(event_bus)
     registry = AgentRegistry()
     memory = MemorySystem()
     registry.register_default(
