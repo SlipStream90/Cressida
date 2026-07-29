@@ -31,6 +31,7 @@ class MissionStatus(enum.StrEnum):
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
+    ESCALATED = "ESCALATED"  # BOND blocked the gate; awaiting a human resolution
 
 
 class TaskStatus(enum.StrEnum):

@@ -58,7 +58,7 @@ from typing import Any
 
 from cressida.core import AgentRole, MissionState, Task
 from cressida.core.model_tiers import ROLE_MODEL, DEFAULT_MODEL
-from cressida.core.paths import cressida_home, project_dir
+from cressida.core.paths import _check_project_dir_is_safe, cressida_home, project_dir
 from cressida.core.providers.base import ProviderAgentBase
 
 # How long (seconds) to wait on a single CLI completion before giving up.
@@ -191,6 +191,10 @@ class ClaudeCLIAgent(ProviderAgentBase):
             spec_file.close()
 
             target = (target or project_dir()).resolve()
+            # Re-checked here, not just at mission-creation time: this is the
+            # actual point where `target` becomes an --add-dir grant to a
+            # bypassPermissions subprocess, so it's the boundary that matters.
+            _check_project_dir_is_safe(target)
             home = cressida_home()
 
             cmd = [
@@ -203,13 +207,28 @@ class ClaudeCLIAgent(ProviderAgentBase):
                 # refuses to read anything outside its cwd, and under -p there is
                 # nobody to approve the prompt, so the read is denied outright.
                 "--add-dir", str(home),
-                # Under -p, file writes also require approval that cannot be
-                # given, so an agent could not persist artifacts into its own
-                # mission folder. acceptEdits pre-grants edits.
+                # Under -p, ANY tool use (edits, Bash, WebSearch, MCP tools like
+                # context7) requires approval that cannot be given non-interactively.
+                # acceptEdits pre-grants file edits (Edit/Write/NotebookEdit) only —
+                # everything else still needs an explicit allow. We deliberately do
+                # NOT use bypassPermissions: that skips every check with no boundary
+                # left at all. Instead we allow exactly what a mission needs to run
+                # end to end (web research + package installs/tests/git via Bash)
+                # and leave everything else (destructive commands, unlisted MCP
+                # tools, etc.) subject to normal denial under -p.
                 "--permission-mode", "acceptEdits",
             ]
             if target != home:
                 cmd.extend(["--add-dir", str(target)])
+            # --allowedTools is variadic (consumes args until the next `--flag`),
+            # so it must come last — anything appended after it risks being
+            # swallowed into the tool list instead of parsed as its own flag.
+            cmd.extend([
+                "--allowedTools",
+                "WebSearch", "WebFetch",
+                "mcp__context7__resolve-library-id", "mcp__context7__query-docs",
+                "Bash",
+            ])
 
             try:
                 proc = subprocess.run(

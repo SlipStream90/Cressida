@@ -61,6 +61,8 @@ class Coordinator:
             Event(type=EventType.MISSION_STARTED, data={"mission_id": state.mission_id, "brief": state.brief}, source="coordinator")
         )
 
+        self._snapshot_project_dir(state)
+
         try:
             # M commissions the mission first: prune agents/tools/skills per task
             # (annotates task.metadata) so downstream agents run lean. Recording
@@ -84,6 +86,20 @@ class Coordinator:
                 batch_tasks = [state.tasks[tid] for tid in batch if tid in state.tasks]
                 await self._execute_batch(batch_tasks, state, batch_idx, schedule)
 
+                if any(t.agent == AgentRole.BOND for t in batch_tasks):
+                    approved, detail = self._check_bond_gate(state)
+                    if not approved:
+                        state.status = MissionStatus.ESCALATED
+                        state.metadata["bond_gate_blocked"] = detail
+                        self._persist_state(state)
+                        await self._event_bus.publish(
+                            Event(type=EventType.MISSION_FAILED, data={
+                                "mission_id": state.mission_id,
+                                "error": f"BOND gate blocked planning/implementation: {detail}",
+                            }, source="coordinator")
+                        )
+                        return state
+
             self._finalize_mission(state)
 
         except CyclicDependencyError as e:
@@ -101,6 +117,135 @@ class Coordinator:
             )
 
         return state
+
+    def _snapshot_project_dir(self, state: MissionState) -> None:
+        """Best-effort git checkpoint of the mission's target project, taken
+        before any agent touches it.
+
+        Agents now run with --permission-mode bypassPermissions (see
+        core/providers/claude_cli_agent.py) — there is no per-action approval
+        step left to catch a bad edit or an errant Bash command. This commit is
+        the safety net that makes a mission's damage reversible: if it goes
+        wrong, ``git diff``/``git reset --hard`` against this commit gets the
+        project back to where it started. Uses ``--allow-empty`` so a restore
+        point exists even on a first run against an already-clean tree.
+
+        Never raises and never blocks the mission: a missing ``git`` binary, an
+        unconfigured commit identity, or any other failure is logged and
+        swallowed. The identity is passed per-invocation (``-c user.name=...``)
+        rather than written to config, so this never mutates the user's git
+        setup.
+        """
+        import subprocess
+
+        raw_target = state.metadata.get("project_dir")
+        if not raw_target:
+            return
+        target_path = Path(raw_target)
+        if not target_path.is_dir():
+            return
+
+        try:
+            if not (target_path / ".git").exists():
+                subprocess.run(
+                    ["git", "init", "-q"],
+                    cwd=str(target_path), capture_output=True, text=True, timeout=30,
+                )
+            subprocess.run(
+                ["git", "add", "-A"],
+                cwd=str(target_path), capture_output=True, text=True, timeout=120,
+            )
+            result = subprocess.run(
+                [
+                    "git", "-c", "user.name=Cressida", "-c", "user.email=cressida@local",
+                    "commit", "--allow-empty",
+                    "-m", f"cressida: pre-mission snapshot ({state.mission_id})",
+                ],
+                cwd=str(target_path), capture_output=True, text=True, timeout=60,
+            )
+            if result.returncode == 0:
+                sha = subprocess.run(
+                    ["git", "rev-parse", "HEAD"],
+                    cwd=str(target_path), capture_output=True, text=True, timeout=15,
+                ).stdout.strip()
+                state.metadata["pre_mission_snapshot"] = sha
+                print(f"[coordinator] pre-mission snapshot {sha[:8]} committed for {state.mission_id}")
+            else:
+                print(f"[coordinator] pre-mission snapshot commit failed: {result.stderr.strip()[:500]}")
+        except Exception as e:
+            print(f"[coordinator] pre-mission snapshot skipped: {e}")
+
+    def _check_bond_gate(self, state: MissionState) -> tuple[bool, str]:
+        """Whether BOND actually approved the plan — the real enforcement this
+        gate was missing.
+
+        Previously nothing read BOND's decision at all: ``_execute_batch``
+        only checks whether the *task* completed (i.e. produced output without
+        raising), not what BOND *decided*, so Planning and Implementation ran
+        unconditionally even after a REJECTED or unresolved-ESCALATE verdict.
+        That was tolerable when every tool call still needed human approval;
+        now that agents run with permissions bypassed end-to-end (see
+        core/providers/claude_cli_agent.py), this is the last checkpoint
+        before code gets written, so it has to actually gate.
+
+        Fails closed: no readable decision file, an unparseable one, or any
+        decision other than "APPROVED" all block the mission. This is
+        deliberate — under the ``claude_cli`` provider, BOND's
+        ``approve_phase``/``reject_phase``/``escalate`` tools are not real
+        callable tools (see ``ClaudeCLIAgent``'s docstring and the
+        ``tooling_gap`` note BOND itself has logged before, e.g.
+        ``missions/mission_20260729_120842/bond_decisions/approve_plan.json``),
+        so an agent that never wrote a well-formed decision file at all is
+        exactly the failure mode to block on, not silently pass through.
+
+        Returns ``(approved, detail)`` where ``detail`` explains the verdict
+        or the block reason.
+        """
+        import json as _json
+
+        m_dir = mission_dir(state.mission_id)
+
+        esc_dir = m_dir / "escalations"
+        if esc_dir.is_dir():
+            for f in sorted(esc_dir.glob("*.json")):
+                try:
+                    rec = _json.loads(f.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                if str(rec.get("status", "")).upper() == "PENDING":
+                    return False, (
+                        f"Unresolved escalation at {f}: {rec.get('issue', '(no issue text)')}. "
+                        f"Resolve it (see resolve_escalation) before this mission can proceed."
+                    )
+
+        decisions_dir = m_dir / "bond_decisions"
+        if not decisions_dir.is_dir():
+            return False, (
+                f"BOND produced no decisions directory at {decisions_dir}. "
+                "No approval on record — refusing to proceed to planning/implementation."
+            )
+
+        candidates = sorted(
+            decisions_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True
+        )
+        if not candidates:
+            return False, (
+                f"BOND's decisions directory ({decisions_dir}) is empty — no approval on record."
+            )
+
+        latest = candidates[0]
+        try:
+            record = _json.loads(latest.read_text(encoding="utf-8"))
+        except Exception as e:
+            return False, f"BOND's decision file ({latest}) is not valid JSON: {e}"
+
+        decision = str(record.get("decision", "")).upper()
+        if decision == "APPROVED":
+            return True, f"BOND approved ({latest.name}): {str(record.get('rationale', ''))[:200]}"
+        return False, (
+            f"BOND's latest decision ({latest.name}) is '{decision or '(missing)'}', not APPROVED: "
+            f"{str(record.get('reason') or record.get('rationale') or '')[:400]}"
+        )
 
     def _commission_mission(self, state: MissionState) -> None:
         """Run M's dispatcher, annotate tasks, and record the plan (best-effort)."""

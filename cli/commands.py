@@ -9,7 +9,9 @@ from pathlib import Path
 from typing import Any
 
 from cressida.core.events import EventBus, EventType
-from cressida.core.paths import knowledge_dir, mission_dir, missions_root, project_dir
+from cressida.core.paths import (
+    _check_project_dir_is_safe, knowledge_dir, mission_dir, missions_root, project_dir,
+)
 from cressida.core.registry import AgentRegistry
 from cressida.core.types import AgentRole, MissionState, MissionStatus, Priority, Task, TaskStatus
 from cressida.evaluation.feedback_collector import FeedbackCollector
@@ -82,6 +84,7 @@ def _build_mission_state(
     state = MissionState(mission_id=mission_id, brief=brief, status=MissionStatus.PENDING)
 
     target = Path(target_dir).expanduser().resolve() if target_dir else project_dir()
+    _check_project_dir_is_safe(target)
     state.metadata["project_dir"] = str(target)
     state.add_task(Task(
         id="research",
