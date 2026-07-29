@@ -8,6 +8,7 @@ from typing import Any
 
 from cressida.core.events import Event, EventBus, EventType
 from cressida.core.paths import cressida_home, mission_dir
+from cressida.core.providers.claude_cli_agent import filter_dynamic_tools
 from cressida.core.registry import AgentRegistry
 from cressida.core.types import AgentRole, MissionState, MissionStatus, Task, TaskStatus
 from cressida.memory.system import MemorySystem
@@ -175,6 +176,48 @@ class Coordinator:
         except Exception as e:
             print(f"[coordinator] pre-mission snapshot skipped: {e}")
 
+    @staticmethod
+    def _parse_bond_decision_file(path: Path) -> dict[str, Any]:
+        """Normalize a BOND decision artifact into ``{"decision", "rationale",
+        "approved_mcp_tools"}`` regardless of whether BOND wrote clean JSON
+        (via a real ``approve_phase``/``reject_phase`` tool call) or free-text
+        markdown (the observed fallback under the ``claude_cli`` provider,
+        which does not expose those as real callable tools — see
+        ``missions/mission_20260729_194951/bond_decisions/bond_approve_plan.md``
+        for a concrete example: ``**Decision: rejected.**`` with no JSON at
+        all). A JSON code fence embedded in the markdown is used for
+        ``approved_mcp_tools`` if present; otherwise that list is empty,
+        which is the safe default — "no tools requested" costs nothing.
+        """
+        import json as _json
+        import re as _re
+
+        text = path.read_text(encoding="utf-8")
+
+        if path.suffix == ".json":
+            record = _json.loads(text)
+            return {
+                "decision": str(record.get("decision", "")).upper(),
+                "rationale": str(record.get("reason") or record.get("rationale") or ""),
+                "approved_mcp_tools": record.get("approved_mcp_tools") or [],
+            }
+
+        # Markdown fallback: look for "Decision: <verdict>" (BOND's own observed
+        # phrasing), then for an embedded ```json ... approved_mcp_tools ... ```
+        # fence if BOND included one.
+        m = _re.search(r"decision[:\s]*\**\s*(APPROVED|REJECTED|ESCALATE(?:D)?)", text, _re.IGNORECASE)
+        decision = m.group(1).upper() if m else ""
+        approved_mcp_tools: list[str] = []
+        for fence in _re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", text, _re.DOTALL):
+            try:
+                fence_data = _json.loads(fence)
+            except Exception:
+                continue
+            if isinstance(fence_data, dict) and "approved_mcp_tools" in fence_data:
+                approved_mcp_tools = fence_data.get("approved_mcp_tools") or []
+                break
+        return {"decision": decision, "rationale": text[:400], "approved_mcp_tools": approved_mcp_tools}
+
     def _check_bond_gate(self, state: MissionState) -> tuple[bool, str]:
         """Whether BOND actually approved the plan — the real enforcement this
         gate was missing.
@@ -184,9 +227,19 @@ class Coordinator:
         raising), not what BOND *decided*, so Planning and Implementation ran
         unconditionally even after a REJECTED or unresolved-ESCALATE verdict.
         That was tolerable when every tool call still needed human approval;
-        now that agents run with permissions bypassed end-to-end (see
-        core/providers/claude_cli_agent.py), this is the last checkpoint
-        before code gets written, so it has to actually gate.
+        now that mission subprocesses run with a fixed tool allowlist and no
+        per-action prompt (see core/providers/claude_cli_agent.py), this is
+        the last checkpoint before code gets written, so it has to actually
+        gate.
+
+        Also extracts BOND's ``approved_mcp_tools`` (per-mission additions to
+        the default tool floor Q may have requested in
+        ``architecture/mcp_tool_requests.json``) and stores the
+        keyword-filtered result on ``state.metadata`` for ClaudeCLIAgent to
+        pick up on the next subprocess launch. This filtering is deliberately
+        redundant with the one ``ClaudeCLIAgent.execute`` does again right
+        before building ``--allowedTools`` — see ``filter_dynamic_tools``'s
+        docstring for why a single filter pass isn't trusted either.
 
         Fails closed: no readable decision file, an unparseable one, or any
         decision other than "APPROVED" all block the mission. This is
@@ -201,12 +254,11 @@ class Coordinator:
         Returns ``(approved, detail)`` where ``detail`` explains the verdict
         or the block reason.
         """
-        import json as _json
-
         m_dir = mission_dir(state.mission_id)
 
         esc_dir = m_dir / "escalations"
         if esc_dir.is_dir():
+            import json as _json
             for f in sorted(esc_dir.glob("*.json")):
                 try:
                     rec = _json.loads(f.read_text(encoding="utf-8"))
@@ -226,7 +278,8 @@ class Coordinator:
             )
 
         candidates = sorted(
-            decisions_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True
+            (p for p in decisions_dir.iterdir() if p.suffix in (".json", ".md")),
+            key=lambda p: p.stat().st_mtime, reverse=True,
         )
         if not candidates:
             return False, (
@@ -235,16 +288,24 @@ class Coordinator:
 
         latest = candidates[0]
         try:
-            record = _json.loads(latest.read_text(encoding="utf-8"))
+            record = self._parse_bond_decision_file(latest)
         except Exception as e:
-            return False, f"BOND's decision file ({latest}) is not valid JSON: {e}"
+            return False, f"BOND's decision file ({latest}) could not be parsed: {e}"
 
-        decision = str(record.get("decision", "")).upper()
+        decision = record["decision"]
         if decision == "APPROVED":
-            return True, f"BOND approved ({latest.name}): {str(record.get('rationale', ''))[:200]}"
+            safe_tools, rejected_tools = filter_dynamic_tools(list(record["approved_mcp_tools"]))
+            state.metadata["approved_mcp_tools"] = safe_tools
+            if rejected_tools:
+                print(
+                    f"[coordinator] BOND approved tool(s) blocked by keyword backstop: "
+                    f"{[(n, kw) for n, kw in rejected_tools]}"
+                )
+            tools_note = f" Additional tools granted: {safe_tools}." if safe_tools else ""
+            return True, f"BOND approved ({latest.name}): {record['rationale'][:200]}{tools_note}"
         return False, (
             f"BOND's latest decision ({latest.name}) is '{decision or '(missing)'}', not APPROVED: "
-            f"{str(record.get('reason') or record.get('rationale') or '')[:400]}"
+            f"{record['rationale'][:400]}"
         )
 
     def _commission_mission(self, state: MissionState) -> None:

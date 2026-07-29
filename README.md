@@ -404,15 +404,56 @@ autonomy:
 
 ## How BOND gating works
 
-After architecture is complete, BOND runs `bond_approve_plan` as a DAG task. It receives the full architecture document and uses its `approve_phase`, `reject_phase`, or `escalate` tools:
+After architecture is complete, BOND runs `bond_approve_plan` as a DAG task. It reviews the research, PRD, and architecture artifacts and records a verdict — via its `approve_phase`/`reject_phase`/`escalate` tools where the provider exposes them as real callable tools, or as a written decision artifact under `bond_decisions/` otherwise (see the CLI-provider caveat below):
 
-- **approve** — planning and implementation proceed in parallel
-- **reject** — `PhaseRejectedError` propagates through the executor; planning is marked FAILED and all dependent tasks are blocked
+- **approve** — planning and implementation proceed
+- **reject** — the mission halts before planning/implementation ever run
 - **escalate** — execution halts; writes an escalation JSON for human review; resume with `cressida resolve-escalation`
 
-This is a hard gate, not advisory. Nothing downstream runs without BOND's sign-off.
+**This is enforced by the coordinator, not just by BOND's own tools.** `Coordinator._check_bond_gate` (`orchestration/coordinator.py`) reads BOND's actual decision after its task completes and only continues the mission on an explicit `APPROVED`. Everything else — `REJECTED`, an unrecognized verdict, a missing decision file, an unparseable one, or an unresolved pending escalation — blocks the mission (`MissionStatus.ESCALATED`) before Planning or Implementation ever start. This fails closed by design: an agent that never produced a readable decision is treated the same as an explicit rejection, not silently passed through.
+
+Why the coordinator has to be the one checking, not just BOND's tool calls: under the **`claude_cli` provider**, `approve_phase`/`reject_phase`/`escalate` are not real callable tools — the CLI is a text-completion backend with no access to Cressida's internal phase-gate machinery, so BOND writes its verdict as a file (JSON if it follows the convention, free-text markdown if it improvises — both are parsed; see `Coordinator._parse_bond_decision_file`) instead of actually raising `PhaseRejectedError`. Earlier, nothing read that file at all — `_execute_batch` only checked whether the *task* completed without an exception, not what BOND *decided*, so a real rejection was silently ignored and implementation ran anyway. That's what the coordinator-level check above closes. Providers with genuine function-calling (anthropic/openai/gemini) get the same enforcement redundantly, at both layers.
 
 **Implementation is verified, not just trusted**: after `BRANCH` runs, the executor checks that at least one file under the mission or target-project directory actually changed since the task started. A sandboxed CLI subprocess that gets its write access denied returns normal-looking text — it just narrates the code instead of saving it — which used to get silently recorded as a successful implementation. That case is now marked FAILED with an explicit error instead.
+
+---
+
+## Tool access & mission safety
+
+Mission subprocesses (the `claude_cli` provider — see [Providers](#providers)) run non-interactively (`-p`), which means there is no human present to approve a tool-use prompt mid-mission. The design principle: **default to a small, fixed floor of low-risk tools; treat anything beyond it as a per-mission decision that has to be reviewed, not a standing grant.**
+
+### The default floor
+
+Every mission subprocess launches with `--permission-mode acceptEdits` (file edits pre-approved) plus a fixed allowlist (`core/providers/claude_cli_agent.py:_ALLOWED_TOOLS`):
+
+- **Research**: `WebSearch`, `WebFetch`, `context7` (`resolve-library-id`, `query-docs`)
+- **Local execution**: `Bash` — this is what actually lets a mission install dependencies, run tests, and commit; see the caveat below
+- **Read-only GitHub**: file/issue/PR/commit reads and searches — no `create_*`, `push_files`, `merge_pull_request`, or `update_*`
+- **Read-only Supabase**: schema/log/advisor introspection — no `apply_migration`, `execute_sql`, `deploy_edge_function`, or branch mutation
+
+Everything not on this list is denied outright under `-p` — not prompted, just refused. Apollo.io, Higgsfield, Gmail/Calendar/Drive, Playwright, and Stitch are excluded wholesale rather than tool-by-tool, since most of their surface has a real-world side effect (sends mail, spends money, publishes, drives your actual logged-in browser) that can't be cleanly separated from a handful of safe reads.
+
+**`Bash` is not sandboxed to the mission's directories.** `--add-dir` (below) only bounds what the `Read`/`Write`/`Edit`/`Glob` tools can touch directly; a Bash command can still `cd` anywhere the OS user can, hit the network, or touch files outside the granted trees. There is no flag-level fix for this — real containment would mean running the subprocess in a container, VM, or a low-privilege OS account, which Cressida does not currently do. Treat that as the honest boundary of what this permission model provides.
+
+### Per-mission additions: proposed by Q, approved by BOND, filtered by a hard backstop
+
+A mission can request specific tools beyond the default floor when its architecture genuinely needs one (e.g. a follow-up PR, a scoped migration). This is **not** self-authorization — three independent things have to agree before a tool is ever granted:
+
+1. **Q proposes.** The architecture task may write `missions/<id>/architecture/mcp_tool_requests.json` — a list of `{tool, tier, justification}` entries. This is a request, not a grant; it changes nothing by itself.
+2. **BOND reviews independently** at the gate above and records `approved_mcp_tools` in its decision (empty if none). BOND is instructed to re-derive the tier itself rather than trust Q's self-classification, and to reject anything with an effect outside this machine regardless of how the request justifies it.
+3. **A hardcoded keyword backstop filters BOND's approval anyway** (`filter_dynamic_tools` in `core/providers/claude_cli_agent.py`), applied twice — once when the coordinator reads BOND's decision, again immediately before the next subprocess launches `--allowedTools`. Names matching `send`, `publish`, `purchase`, `delete`, `merge_pull_request`, `execute_sql`, `deploy`, `email`, `authenticate`, and similar are stripped regardless of what was approved upstream, and every strip is logged (`[coordinator] BOND approved tool(s) blocked by keyword backstop: ...`).
+
+Why three checkpoints instead of trusting either agent's judgment alone: BOND's approval is itself just an LLM's classification of a text description, which is exactly the kind of decision indirect prompt injection targets — a fetched page or a crafted tool description could try to talk a reviewer into approving something it shouldn't. No single classification pass is treated as authoritative; the keyword filter is a deliberately dumb, non-LLM backstop underneath both passes. It's coarse by design (a denylist is inherently incomplete against tools it has never seen) — it exists to catch the obvious cases the review pipeline might still wave through, not to replace that pipeline.
+
+Approved, filtered tools apply only to that mission's remaining subprocess launches (Planning/Implementation onward) — they are not persisted into the global default floor.
+
+### `project_dir` safety guard
+
+A mission's target `project_dir` becomes an `--add-dir` grant — the boundary for what `Read`/`Write`/`Edit`/`Glob` can touch. `core/paths.py:_check_project_dir_is_safe` rejects a mission pointed at a drive/filesystem root, well-known system directories (`C:\Windows`, `/etc`, `/usr`, etc.), the bare home directory, or the Cressida install itself — checked both at mission creation (`cli/commands.py`) and again immediately before the subprocess launches (`core/providers/claude_cli_agent.py`), since that second point is the actual enforcement boundary. This does not, and cannot, constrain `Bash` — see above.
+
+### Pre-mission git snapshot
+
+`Coordinator._snapshot_project_dir` runs a best-effort `git init`/`add`/`commit --allow-empty` against the target project the moment a mission starts (per-commit identity override, never touches your global git config). This is the reversibility net for the target project's *files* specifically: `git diff`/`git reset --hard` against the recorded `pre_mission_snapshot` commit undoes a mission's local file changes. It does not cover Cressida's own install directory, anything reached via Bash outside the project, or any remote system a mission's tools touched.
 
 ---
 

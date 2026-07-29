@@ -206,13 +206,34 @@ async def run_mission(
 
     mission_id = f"mission_{_dt.now().strftime('%Y%m%d_%H%M%S')}"
 
+    # Resolve a path-form brief to its actual content *here*, before it is ever
+    # persisted. cli/commands.py:run_mission also resolves a path -- but it
+    # resolves the path to the copy this function writes below, not the
+    # original argument. If that original argument was itself a path (this
+    # tool's docstring explicitly invites that: "or a path to a markdown
+    # file"), the copy just contains the path string, and cli/commands.py's
+    # resolve step reads back... the path string, one level short of the real
+    # content. That silently starved Dispatcher._select_skills (which
+    # keyword-matches against state.brief for skill selection) of every real
+    # word in the brief -- it only ever saw path fragments like "users" and
+    # "desktop", never "frontend" or "dashboard". Skill selection isn't the
+    # only downstream reader of state.brief, so this is fixed at the source,
+    # not patched in the one place it happened to be noticed.
+    resolved_brief = brief
+    try:
+        candidate = Path(brief.strip())
+        if candidate.is_file():
+            resolved_brief = candidate.read_text(encoding="utf-8")
+    except OSError:
+        pass  # Not a valid path on this OS (e.g. too long) -- treat as literal text.
+
     # Keep the brief inside the mission it belongs to. It used to be written to
     # the directory above the repo root, where concurrent missions overwrote each
     # other's brief and the stray files were left behind on failure.
     out_dir = _mission_path(mission_id)
     out_dir.mkdir(parents=True, exist_ok=True)
     brief_path = out_dir / "brief.md"
-    brief_path.write_text(brief, encoding="utf-8")
+    brief_path.write_text(resolved_brief, encoding="utf-8")
 
     # Spawn the mission in its own visible console window so it can be watched
     # live, agent by agent, instead of running silently inside this MCP server

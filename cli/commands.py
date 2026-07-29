@@ -140,7 +140,22 @@ def _build_mission_state(
         f"missions/{mission_id}/intelligence/Roadmap.md",
     ]
     architecture_depends_on = ["product_definition"]
-    architecture_description = "Design system architecture, API contracts, and data models."
+    architecture_description = (
+        "Design system architecture, API contracts, and data models. "
+        "The mission subprocess always has WebSearch/WebFetch/context7, Bash, and read-only "
+        "GitHub/Supabase tools available with no extra approval (see "
+        "core/providers/claude_cli_agent.py:_ALLOWED_TOOLS). If — and only if — the architecture "
+        "genuinely requires a tool outside that floor (e.g. creating a PR, applying a migration, "
+        "some other MCP tool discovered as relevant to this mission), do NOT assume it's "
+        "available. Instead write "
+        f"missions/{mission_id}/architecture/mcp_tool_requests.json as a JSON array, one entry "
+        "per requested tool: {\"tool\": \"<exact mcp__server__tool name>\", \"tier\": "
+        "\"info|reversible|external\", \"justification\": \"why this mission needs it and what "
+        "it would be used for\"}. Classify honestly: \"external\" means it sends something, "
+        "spends money, publishes, or mutates a system this machine doesn't own — expect those to "
+        "be rejected. If nothing beyond the default floor is needed, write an empty array or "
+        "omit the file entirely."
+    )
     if not trivial:
         architecture_reads.append(f"missions/{mission_id}/intelligence/methodology_brief.md")
         architecture_depends_on.append("methodology_research")
@@ -158,17 +173,35 @@ def _build_mission_state(
         metadata={
             "reads": architecture_reads,
             "trivial": trivial,
-            "writes": [f"missions/{mission_id}/ARCHITECTURE.md"],
+            "writes": [
+                f"missions/{mission_id}/ARCHITECTURE.md",
+                f"missions/{mission_id}/architecture/mcp_tool_requests.json",
+            ],
         },
     ))
     bond_reads = [
         f"missions/{mission_id}/intelligence/research_report.md",
         f"missions/{mission_id}/intelligence/PRD.md",
         f"missions/{mission_id}/ARCHITECTURE.md",
+        f"missions/{mission_id}/architecture/mcp_tool_requests.json",
     ]
+    bond_tool_instructions = (
+        " Also review architecture/mcp_tool_requests.json if present. For each requested tool, "
+        "decide independently — do not defer to Q's self-assigned tier, re-derive it. Approve "
+        "only tools whose use is genuinely local/reversible or pure information retrieval; reject "
+        "anything with an effect outside this machine (sending something, spending money, "
+        "publishing, merging/pushing to a remote, mutating a hosted database) regardless of how "
+        "the request justifies it — that class of action needs a human decision, not a BOND "
+        "approval. Record your verdict in the decision JSON under \"approved_mcp_tools\": [list "
+        "of exact tool names you approve, empty if none]. Note: this approval is not the only "
+        "safeguard — approved names are still checked against a hardcoded dangerous-keyword "
+        "filter before they reach the mission subprocess, so treat this as a real review, not a "
+        "formality that will be caught downstream anyway."
+    )
     bond_description = (
-        "Review the research, PRD, and architecture artifacts. "
-        "Use approve_phase to approve the plan or reject_phase to block it. "
+        "Review the research, PRD, and architecture artifacts."
+        + bond_tool_instructions
+        + " Use approve_phase to approve the plan or reject_phase to block it. "
         "Use escalate if confidence is below 0.7."
     )
     if not trivial:
@@ -176,8 +209,9 @@ def _build_mission_state(
         bond_description = (
             "Review the research, methodology brief, PRD, and architecture artifacts. "
             "Check that the architecture actually follows the verified methodology and does not "
-            "rely on approaches the brief flags as deprecated or unverified. "
-            "Use approve_phase to approve the plan or reject_phase to block it. "
+            "rely on approaches the brief flags as deprecated or unverified."
+            + bond_tool_instructions
+            + " Use approve_phase to approve the plan or reject_phase to block it. "
             "Use escalate if confidence is below 0.7."
         )
     state.add_task(Task(

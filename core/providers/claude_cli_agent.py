@@ -64,6 +64,104 @@ from cressida.core.providers.base import ProviderAgentBase
 # How long (seconds) to wait on a single CLI completion before giving up.
 _DEFAULT_TIMEOUT = float(os.environ.get("CRESSIDA_CLAUDE_CLI_TIMEOUT", "3600"))
 
+# Tools granted to every mission subprocess with no per-call approval (see
+# --allowedTools below). The line we hold: information retrieval and locally-
+# reversible actions are fair game; anything with a consequence outside this
+# machine — sending mail, spending money, publishing, merging/pushing to a
+# remote, mutating a hosted database — is deliberately left OFF this list, so
+# it's denied outright under non-interactive `-p` rather than silently granted.
+# A mission needing one of those has to be a human decision, not a standing
+# grant baked into every run. Add to this list only by the same test: "if this
+# fires with nobody watching, does anything happen outside this machine?" If
+# yes, it doesn't belong here.
+_ALLOWED_TOOLS: tuple[str, ...] = (
+    # Research / information — no side effects at all.
+    "WebSearch", "WebFetch",
+    "mcp__context7__resolve-library-id", "mcp__context7__query-docs",
+    # Local execution — installs/tests/git all run against the granted
+    # --add-dir trees. Not sandboxed to them (Bash isn't scoped by --add-dir),
+    # but is the only way a mission actually builds; see the coordinator's
+    # pre-mission git snapshot for the local reversibility this depends on.
+    "Bash",
+    # GitHub: read/search only. No create_*, push_files, merge_pull_request,
+    # update_*, or fork/create_repository — those mutate a real remote repo,
+    # which is an external system, not something this machine owns.
+    "mcp__github__get_file_contents",
+    "mcp__github__get_issue",
+    "mcp__github__get_pull_request",
+    "mcp__github__get_pull_request_comments",
+    "mcp__github__get_pull_request_files",
+    "mcp__github__get_pull_request_reviews",
+    "mcp__github__get_pull_request_status",
+    "mcp__github__list_commits",
+    "mcp__github__list_issues",
+    "mcp__github__list_pull_requests",
+    "mcp__github__search_code",
+    "mcp__github__search_issues",
+    "mcp__github__search_repositories",
+    "mcp__github__search_users",
+    # Supabase: read/introspection only. No apply_migration, execute_sql,
+    # deploy_edge_function, or branch mutation — those change a live hosted
+    # project, which is an external system even when scoped to a branch.
+    "mcp__supabase__list_edge_functions",
+    "mcp__supabase__list_extensions",
+    "mcp__supabase__list_migrations",
+    "mcp__supabase__list_tables",
+    "mcp__supabase__list_branches",
+    "mcp__supabase__get_advisors",
+    "mcp__supabase__get_logs",
+    "mcp__supabase__get_edge_function",
+    "mcp__supabase__get_project_url",
+    "mcp__supabase__get_publishable_keys",
+    "mcp__supabase__generate_typescript_types",
+    "mcp__supabase__search_docs",
+    # Deliberately excluded entirely (not narrowed, not partially allowed):
+    # Apollo.io (CRM/email/purchasing — every tool has a real-world target),
+    # Higgsfield (publishes content, spends credits, deploys publicly),
+    # Gmail/Calendar/Drive (real personal accounts once authenticated),
+    # Playwright (drives the user's actual logged-in browser session),
+    # Stitch (unrelated to this stack; revisit if a mission actually needs it).
+)
+
+# Per-mission additions to the floor above go through Q (proposes, in
+# ARCHITECTURE's mcp_tool_requests.json) then BOND (approves/rejects in its
+# gate decision — see cli/commands.py's bond_tool_instructions and
+# orchestration/coordinator.py's _check_bond_gate). Neither pass is trusted
+# alone: BOND's approval is itself just an LLM judgment call, exactly the kind
+# of thing indirect prompt injection targets (a fetched page or tool
+# description engineered to talk the reviewer into approving something it
+# shouldn't). This keyword filter is the backstop underneath both passes —
+# names matching these substrings are stripped from the approved list
+# regardless of what Q proposed or BOND approved, no exceptions. It is
+# intentionally coarse (denylists are inherently incomplete against tools it
+# has never seen); it exists to catch the obvious cases the review pipeline
+# might still wave through, not to replace that pipeline.
+_DANGEROUS_TOOL_KEYWORDS: tuple[str, ...] = (
+    "send", "publish", "purchase", "buy", "billing", "transaction",
+    "merge_pull_request", "push_files", "create_or_update_file",
+    "create_repository", "fork_repository", "create_issue", "create_pull_request",
+    "update_issue", "update_pull_request", "delete", "remove",
+    "execute_sql", "apply_migration", "deploy", "reset_branch", "rebase_branch",
+    "merge_branch", "email", "campaign", "authenticate", "webhook",
+)
+
+
+def filter_dynamic_tools(candidates: list[str]) -> tuple[list[str], list[tuple[str, str]]]:
+    """Split a BOND-approved tool list into (safe, rejected) against the hard
+    keyword backstop. ``rejected`` is a list of (tool_name, matched_keyword)
+    pairs so the caller can log exactly what was stripped and why — this
+    should never fire silently."""
+    safe: list[str] = []
+    rejected: list[tuple[str, str]] = []
+    for name in candidates:
+        lowered = name.lower()
+        hit = next((kw for kw in _DANGEROUS_TOOL_KEYWORDS if kw in lowered), None)
+        if hit:
+            rejected.append((name, hit))
+        elif name not in _ALLOWED_TOOLS:  # no point re-adding what's already granted
+            safe.append(name)
+    return safe, rejected
+
 
 def _fallback_cli_locations() -> list[Path]:
     """Well-known install locations to probe when `claude` isn't on PATH.
@@ -161,7 +259,19 @@ class ClaudeCLIAgent(ProviderAgentBase):
         # trivial mission onto the worker-tier model even for a strategic role —
         # a per-task override beats this agent's fixed per-role default.
         model = task.metadata.get("model_hint") or self._model
-        text = await self._invoke(system_prompt, user_prompt, target, model)
+
+        # BOND-approved per-mission tool grants (see _check_bond_gate in
+        # orchestration/coordinator.py) already passed through the keyword
+        # backstop once there; re-filtered here too since this is the actual
+        # boundary where a name becomes an --allowedTools grant, and trusting
+        # a single upstream filter is the same mistake as trusting a single
+        # classification pass.
+        approved = state.metadata.get("approved_mcp_tools") or []
+        extra_tools, rejected = filter_dynamic_tools(list(approved))
+        for name, keyword in rejected:
+            print(f"[claude-cli] dynamic tool grant '{name}' blocked by keyword backstop ('{keyword}')")
+
+        text = await self._invoke(system_prompt, user_prompt, target, model, extra_tools)
 
         self._write_output(state.mission_id, task, text)
         return text
@@ -169,18 +279,20 @@ class ClaudeCLIAgent(ProviderAgentBase):
     # ── CLI invocation ──────────────────────────────────────────────────────
 
     async def _invoke(
-        self, system_prompt: str, user_prompt: str, target: Path | None = None, model: str | None = None,
+        self, system_prompt: str, user_prompt: str, target: Path | None = None,
+        model: str | None = None, extra_tools: list[str] | None = None,
     ) -> str:
         import asyncio
 
         # Run the blocking subprocess in a thread so we don't stall the event
         # loop and stay portable across asyncio subprocess quirks on Windows.
         return await asyncio.get_event_loop().run_in_executor(
-            None, self._invoke_blocking, system_prompt, user_prompt, target, model
+            None, self._invoke_blocking, system_prompt, user_prompt, target, model, extra_tools
         )
 
     def _invoke_blocking(
-        self, system_prompt: str, user_prompt: str, target: Path | None = None, model: str | None = None,
+        self, system_prompt: str, user_prompt: str, target: Path | None = None,
+        model: str | None = None, extra_tools: list[str] | None = None,
     ) -> str:
         # The agent spec can be large; pass it as a file to avoid arg limits.
         spec_file = tempfile.NamedTemporaryFile(
@@ -192,8 +304,8 @@ class ClaudeCLIAgent(ProviderAgentBase):
 
             target = (target or project_dir()).resolve()
             # Re-checked here, not just at mission-creation time: this is the
-            # actual point where `target` becomes an --add-dir grant to a
-            # bypassPermissions subprocess, so it's the boundary that matters.
+            # actual point where `target` becomes an --add-dir grant to the
+            # subprocess, so it's the boundary that matters.
             _check_project_dir_is_safe(target)
             home = cressida_home()
 
@@ -223,12 +335,11 @@ class ClaudeCLIAgent(ProviderAgentBase):
             # --allowedTools is variadic (consumes args until the next `--flag`),
             # so it must come last — anything appended after it risks being
             # swallowed into the tool list instead of parsed as its own flag.
-            cmd.extend([
-                "--allowedTools",
-                "WebSearch", "WebFetch",
-                "mcp__context7__resolve-library-id", "mcp__context7__query-docs",
-                "Bash",
-            ])
+            # extra_tools are this mission's BOND-approved additions on top of
+            # the static floor (see execute() above) — already passed through
+            # the keyword backstop before reaching here.
+            all_tools = list(_ALLOWED_TOOLS) + [t for t in (extra_tools or []) if t not in _ALLOWED_TOOLS]
+            cmd.extend(["--allowedTools", *all_tools])
 
             try:
                 proc = subprocess.run(
