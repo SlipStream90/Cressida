@@ -12,28 +12,12 @@ except ImportError:
 
 from cressida.core.interfaces import Agent
 from cressida.core import AgentRole, MissionState, Task
+from cressida.core.model_tiers import ROLE_MODEL as _ROLE_MODEL, DEFAULT_MODEL as _DEFAULT_MODEL
 from cressida.core.paths import mission_dir, project_dir, resolve_under_home
 from cressida.core.tools.definitions import get_tools_for_role, select_tools_for_task
 from cressida.core.tools.implementations import execute_tool, PhaseRejectedError, PhaseEscalatedError
 from cressida.orchestration.context_builder import ContextBuilder
 
-
-# BOND and strategic agents use Opus for deeper reasoning.
-# Implementation agents use Sonnet for throughput.
-_ROLE_MODEL: dict[AgentRole, str] = {
-    AgentRole.BOND:         "claude-opus-5",
-    AgentRole.INTELLIGENCE: "claude-opus-5",
-    AgentRole.LEITER:       "claude-opus-5",
-    AgentRole.Q:            "claude-opus-5",
-    AgentRole.TANNER:       "claude-sonnet-5",
-    AgentRole.BRANCH:       "claude-sonnet-5",
-    AgentRole.ROOK:         "claude-sonnet-5",
-    AgentRole.BOOTHROYD:    "claude-sonnet-5",
-    AgentRole.MONEYPENNY:   "claude-sonnet-5",
-    AgentRole.REVIEW:       "claude-sonnet-5",
-}
-
-_DEFAULT_MODEL = "claude-sonnet-5"
 _MAX_TOOL_ROUNDS = 40  # safety cap on the agentic loop
 
 

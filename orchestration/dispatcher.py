@@ -28,6 +28,7 @@ from datetime import datetime
 from typing import Any
 
 from cressida.core import AgentRole, MissionState, Task
+from cressida.core.model_tiers import DEFAULT_MODEL
 from cressida.core.tools.definitions import get_tool_names_for_role
 from cressida.orchestration.router import TaskRouter
 
@@ -242,7 +243,7 @@ class Dispatcher:
             return explicit
         # Right-size clearly trivial tasks to a cheaper tier even for heavy roles.
         if task.metadata.get("trivial") is True:
-            return "claude-sonnet-5"
+            return DEFAULT_MODEL
         return None
 
     def _rationale(self, role: AgentRole, tools: list[str], skills: list[str]) -> str:

@@ -57,14 +57,9 @@ from pathlib import Path
 from typing import Any
 
 from cressida.core import AgentRole, MissionState, Task
+from cressida.core.model_tiers import ROLE_MODEL, DEFAULT_MODEL
 from cressida.core.paths import cressida_home, project_dir
 from cressida.core.providers.base import ProviderAgentBase
-
-
-# Strategic roles get the strongest model; workers get the faster one.
-_STRATEGIC = {AgentRole.BOND, AgentRole.INTELLIGENCE, AgentRole.LEITER, AgentRole.Q}
-_STRATEGIC_MODEL = "claude-opus-5"
-_WORKER_MODEL = "claude-sonnet-5"
 
 # How long (seconds) to wait on a single CLI completion before giving up.
 _DEFAULT_TIMEOUT = float(os.environ.get("CRESSIDA_CLAUDE_CLI_TIMEOUT", "3600"))
@@ -144,11 +139,11 @@ class ClaudeCLIAgent(ProviderAgentBase):
                 "CRESSIDA_CLAUDE_CLI to its full path."
             )
 
-        # Explicit model > env override > per-role default.
+        # Explicit model > env override > per-role default (core/model_tiers.py).
         self._model = (
             model
             or os.environ.get("CRESSIDA_CLAUDE_MODEL")
-            or (_STRATEGIC_MODEL if role in _STRATEGIC else _WORKER_MODEL)
+            or ROLE_MODEL.get(role, DEFAULT_MODEL)
         )
         # The working directory is now chosen per task (the mission's target
         # project), not pinned to the install dir — see _invoke_blocking.

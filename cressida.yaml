@@ -38,18 +38,32 @@ agents:
   provider: "auto"
 
   model_overrides:
-    # NOTE: like the obsidian: block below, this file is documentation only for
-    # the anthropic/claude_cli providers — nothing parses cressida.yaml's
-    # model_overrides.anthropic. The real, live per-role model maps are
-    # core/llm_agent.py's _ROLE_MODEL (native "anthropic" provider) and
-    # core/providers/claude_cli_agent.py's _STRATEGIC_MODEL/_WORKER_MODEL (the
-    # "claude_cli" provider, the one actually used when no API key is set).
-    # Keep this block in sync with those if you change either.
+    # NOTE: like the obsidian: block below, this file is documentation only —
+    # nothing parses cressida.yaml's model_overrides.anthropic. The real, live
+    # source of truth for both Anthropic-backed providers (native "anthropic"
+    # and the "claude_cli" subprocess path, the one actually used when no API
+    # key is set) is core/model_tiers.py's ROLE_MODEL. Edit that file, not this
+    # block, to change model assignments — keep this in sync if you do.
+    #
+    # Tiering: planners/deciders (M, R, INTELLIGENCE, LEITER, Q, BOND, TANNER)
+    # run on haiku/sonnet — fast, since their output is gated or checked
+    # downstream rather than shipping as-is. Executors (BRANCH, ROOK,
+    # BOOTHROYD, MONEYPENNY, REVIEW) run on opus, since their output ships as
+    # the mission's actual deliverable and a defect there is expensive to
+    # catch after the fact.
     anthropic:
-      BOND:         "claude-opus-5"
-      INTELLIGENCE: "claude-opus-5"
-      LEITER:       "claude-opus-5"
-      Q:            "claude-opus-5"
+      M:            "claude-haiku-4-5-20251001"
+      R:            "claude-haiku-4-5-20251001"
+      INTELLIGENCE: "claude-sonnet-5"
+      LEITER:       "claude-sonnet-5"
+      Q:            "claude-sonnet-5"
+      BOND:         "claude-sonnet-5"
+      TANNER:       "claude-sonnet-5"
+      BRANCH:       "claude-opus-5"
+      ROOK:         "claude-opus-5"
+      BOOTHROYD:    "claude-opus-5"
+      MONEYPENNY:   "claude-opus-5"
+      REVIEW:       "claude-opus-5"
       default:      "claude-sonnet-5"
     openai:
       BOND:         "gpt-4o"
