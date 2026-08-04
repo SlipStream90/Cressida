@@ -41,5 +41,4 @@ jobs:
       - name: Check MCP connection
         run: |
           opencode mcp list | tee mcp-list.txt
-          grep -q "cressida" mcp-list.txt || { echo "cressida MCP server not registered"; exit 1; }
-          opencode mcp debug cressida
+          grep -q "✓ cressida connected" mcp-list.txt || { echo "cressida MCP server not connected"; exit 1; }
