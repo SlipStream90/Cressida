@@ -26,22 +26,8 @@ jobs:
       - name: Verify opencode installed
         run: opencode --version
 
-      - name: Install CRESSIDA
-        run: python -m pip install -e .
-
-      - name: Register CRESSIDA as an opencode MCP server
-        run: |
-          cat > opencode.json <<'EOF'
-          {
-            "mcp": {
-              "cressida": {
-                "type": "local",
-                "command": ["python3", "-m", "cressida.mcp_server"],
-                "enabled": true
-              }
-            }
-          }
-          EOF
+      - name: Install CRESSIDA and wire up the opencode MCP server
+        run: python onboard.py --register
 
       - name: Check MCP connection
         run: |
