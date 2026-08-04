@@ -161,7 +161,6 @@ class OpenCodeAgent(ProviderAgentBase):
             "run",
             "--format", "json",
             "--dir", work_dir,
-            "--auto",
         ]
 
         # Only add --model if a specific model is configured

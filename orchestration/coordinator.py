@@ -202,11 +202,17 @@ class Coordinator:
                 "approved_mcp_tools": record.get("approved_mcp_tools") or [],
             }
 
-        # Markdown fallback: look for "Decision: <verdict>" (BOND's own observed
-        # phrasing), then for an embedded ```json ... approved_mcp_tools ... ```
-        # fence if BOND included one.
-        m = _re.search(r"decision[:\s]*\**\s*(APPROVED|REJECTED|ESCALATE(?:D)?)", text, _re.IGNORECASE)
+        # Markdown fallback: look for "Decision:"/"Verdict:"/"gate":  <verdict>
+        # (BOND has been observed writing all three labels, and using the
+        # unsuffixed "APPROVE"/"REJECT" as well as "APPROVED"/"REJECTED"), then
+        # for an embedded ```json ... approved_mcp_tools ... ``` fence if BOND
+        # included one.
+        m = _re.search(
+            r"(?:decision|verdict|gate)[:\s]*\**\s*(APPROVE(?:D)?|REJECT(?:ED)?|ESCALATE(?:D)?)",
+            text, _re.IGNORECASE,
+        )
         decision = m.group(1).upper() if m else ""
+        decision = {"APPROVE": "APPROVED", "REJECT": "REJECTED", "ESCALATE": "ESCALATED"}.get(decision, decision)
         approved_mcp_tools: list[str] = []
         for fence in _re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", text, _re.DOTALL):
             try:
