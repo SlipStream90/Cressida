@@ -26,8 +26,11 @@ curl -fsSL https://raw.githubusercontent.com/SlipStream90/Cressida/MI6/install.s
 
 ```powershell
 # Windows PowerShell
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 irm https://raw.githubusercontent.com/SlipStream90/Cressida/MI6/install.ps1 | iex
 ```
+
+If `irm` fails with a TLS/connection error, the line above forces TLS 1.2, which fixes it on older PowerShell/.NET defaults.
 
 Either script clones the repo to `~/.cressida`, builds an **isolated virtualenv**, installs CRESSIDA, and registers the MCP server with Claude Code — then restart the client and call `cressida_status`. Add a provider with `CRESSIDA_PROVIDER=anthropic` before running, or stay keyless via the Claude Code / opencode CLI. Re-run any time to update. *(Requires the repo to be public and `git` + Python 3.11+ installed.)*
 
@@ -44,8 +47,8 @@ Taps from [`SlipStream90/homebrew-cressida`](https://github.com/SlipStream90/hom
 Prefer to see each step? Three of them.
 
 ```bash
-# 1. Clone
-git clone git@github.com:SlipStream90/Cressida.git cressida
+# 1. Clone (use HTTPS unless you've already added an SSH key to GitHub)
+git clone https://github.com/SlipStream90/Cressida.git cressida
 cd cressida
 
 # 2. (recommended) isolate in a virtual environment
