@@ -9,7 +9,8 @@ description = "CRESSIDA - Autonomous Multi-Agent Software Engineering Intelligen
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "mcp>=1.2",         # MCP server (python -m cressida.mcp_server)
+    "mcp>=1.2,<2",      # MCP server (python -m cressida.mcp_server) — mcp 2.x changed the
+                        # server API cressida/mcp_server.py imports; pin until that's ported.
     "aiohttp",          # async LLM/http calls + status server
     "pydantic>=2",
     "pyyaml",           # daemon scheduler + inbox YAML briefs

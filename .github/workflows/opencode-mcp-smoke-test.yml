@@ -26,8 +26,17 @@ jobs:
       - name: Verify opencode installed
         run: opencode --version
 
-      - name: Install CRESSIDA and wire up the opencode MCP server
-        run: python onboard.py --register
+      # This is the exact README one-liner (`curl ... install.sh | bash`), just
+      # sourced from this checkout instead of raw.githubusercontent.com so the
+      # test always exercises the commit under test, not a possibly-stale or
+      # not-yet-pushed copy. CRESSIDA_REPO=local path makes install.sh `git
+      # clone` this checkout's current commit — same clone -> isolated venv ->
+      # pip install -e -> `onboard.py --skip-install --register` sequence a
+      # real user's machine runs.
+      - name: Run the documented installer against this commit
+        run: |
+          export CRESSIDA_REPO="$GITHUB_WORKSPACE"
+          bash install.sh
 
       - name: Check MCP connection
         run: |
