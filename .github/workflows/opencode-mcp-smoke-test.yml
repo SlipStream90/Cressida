@@ -41,4 +41,8 @@ jobs:
       - name: Check MCP connection
         run: |
           opencode mcp list | tee mcp-list.txt
-          grep -q "✓ cressida connected" mcp-list.txt || { echo "cressida MCP server not connected"; exit 1; }
+          # opencode colors this output for a terminal (ANSI escape codes between
+          # words), so strip them before matching -- a raw string match against
+          # "cressida connected" fails even when the server is genuinely up.
+          CLEAN=$(sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g' mcp-list.txt)
+          echo "$CLEAN" | grep -q "cressida connected" || { echo "cressida MCP server not connected"; exit 1; }
