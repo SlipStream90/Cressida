@@ -65,7 +65,6 @@ Mission Started
 Mission Complete
 ```
 
-> 🎥 Replace with a terminal GIF.
 
 ---
 
@@ -410,8 +409,6 @@ cressida run brief.md
 ---
 
 # Benchmarks
-
-> Replace with measured benchmarks.
 
 | Feature | Claude Code | CRESSIDA |
 |----------|------------|-----------|
