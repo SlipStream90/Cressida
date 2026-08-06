@@ -14,7 +14,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command")
 
-    _PROVIDER_HELP = "LLM provider: auto | anthropic | openai | gemini | groq | ollama | claude_cli | opencode (default: auto)"
+    _PROVIDER_HELP = "LLM provider: auto | anthropic | openai | gemini | groq | ollama | claude_cli | opencode | codex (default: auto)"
 
     run_parser = subparsers.add_parser("run", help="Run a mission")
     run_parser.add_argument("brief", type=str, help="Mission brief file or inline string")

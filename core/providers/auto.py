@@ -13,7 +13,7 @@ Priority order (first match wins):
   8. Ollama server reachable at localhost:11434 (no API key needed)
 
 The CRESSIDA_PROVIDER env var (or --provider CLI flag) accepts:
-  anthropic | openai | gemini | groq | ollama | claude_cli | opencode
+  anthropic | openai | gemini | groq | ollama | claude_cli | opencode | codex
   (claude_cli also accepts the aliases: claude-cli, cli, claude)
   (opencode also accepts the alias: oc)
 """
@@ -35,6 +35,7 @@ PROVIDER_GROQ       = "groq"
 PROVIDER_OLLAMA     = "ollama"
 PROVIDER_CLAUDE_CLI = "claude_cli"
 PROVIDER_OPENCODE   = "opencode"
+PROVIDER_CODEX      = "codex"
 
 _ALL_PROVIDERS = (
     PROVIDER_ANTHROPIC,
@@ -44,6 +45,7 @@ _ALL_PROVIDERS = (
     PROVIDER_OLLAMA,
     PROVIDER_CLAUDE_CLI,
     PROVIDER_OPENCODE,
+    PROVIDER_CODEX,
 )
 
 # Accepted aliases for the Claude CLI provider (normalised in detect_provider).
@@ -51,6 +53,9 @@ _CLAUDE_CLI_ALIASES = {"claude_cli", "claude-cli", "claudecli", "cli", "claude"}
 
 # Accepted aliases for the OpenCode provider.
 _OPENCODE_ALIASES = {"opencode", "oc"}
+
+# Accepted aliases for the Codex provider.
+_CODEX_ALIASES = {"codex", "openai_codex", "codex_cli"}
 
 
 def detect_provider() -> str:
@@ -66,6 +71,8 @@ def detect_provider() -> str:
             return PROVIDER_CLAUDE_CLI
         if explicit in _OPENCODE_ALIASES:
             return PROVIDER_OPENCODE
+        if explicit in _CODEX_ALIASES:
+            return PROVIDER_CODEX
         if explicit not in _ALL_PROVIDERS:
             raise ValueError(
                 f"Unknown CRESSIDA_PROVIDER={explicit!r}. "
@@ -94,9 +101,13 @@ def detect_provider() -> str:
     if _claude_cli_available():
         return PROVIDER_CLAUDE_CLI
 
-    # OpenCode (no API key — uses OpenCode's own auth). Preferred over Ollama.
+    # OpenCode (no API key — uses OpenCode's own auth). Preferred over Codex/Ollama.
     if _opencode_available():
         return PROVIDER_OPENCODE
+
+    # Codex CLI (no API key — uses Codex's own login). Preferred over Ollama.
+    if _codex_available():
+        return PROVIDER_CODEX
 
     # Ollama (local, no API key, no Python SDK needed)
     if _ollama_reachable():
@@ -110,6 +121,7 @@ def detect_provider() -> str:
         "  GROQ_API_KEY       (+ pip install openai)\n"
         "  Or install the Claude CLI (https://claude.com/claude-code) — no API key needed.\n"
         "  Or install OpenCode (https://opencode.ai) — no API key needed.\n"
+        "  Or install the Codex CLI — no API key needed.\n"
         "  Or start Ollama locally (https://ollama.com) — no API key needed.\n"
         "  Or set CRESSIDA_PROVIDER explicitly to one of: "
         + ", ".join(_ALL_PROVIDERS)
@@ -132,6 +144,8 @@ def create_agent(
         provider = PROVIDER_CLAUDE_CLI
     if provider in _OPENCODE_ALIASES:
         provider = PROVIDER_OPENCODE
+    if provider in _CODEX_ALIASES:
+        provider = PROVIDER_CODEX
 
     if provider == PROVIDER_ANTHROPIC:
         from cressida.core.llm_agent import LLMAgent
@@ -173,6 +187,16 @@ def create_agent(
     if provider == PROVIDER_OPENCODE:
         from cressida.core.providers.opencode_agent import OpenCodeAgent
         return OpenCodeAgent(
+            role=role,
+            agents_dir=agents_dir,
+            cressida_root=cressida_root,
+            max_tokens=max_tokens,
+            timeout=timeout if timeout > 0 else None,
+        )
+
+    if provider == PROVIDER_CODEX:
+        from cressida.core.providers.codex_agent import CodexAgent
+        return CodexAgent(
             role=role,
             agents_dir=agents_dir,
             cressida_root=cressida_root,
@@ -233,3 +257,9 @@ def _opencode_available() -> bool:
     """Return True if the `opencode` CLI binary is installed and locatable."""
     from cressida.core.providers.opencode_agent import opencode_cli_path
     return opencode_cli_path() is not None
+
+
+def _codex_available() -> bool:
+    """Return True if the `codex` CLI binary is installed and locatable."""
+    from cressida.core.providers.codex_agent import codex_cli_path
+    return codex_cli_path() is not None

@@ -187,7 +187,7 @@ async def run_mission(
     Args:
         brief:        What you want built. Can be a plain-English description
                       or a path to a markdown file containing a PRD.
-        provider:     auto | opencode | claude_cli | anthropic | openai | gemini | groq | ollama
+        provider:     auto | opencode | claude_cli | codex | anthropic | openai | gemini | groq | ollama
         ollama_model: Only used when provider=ollama. Default: llama3.2
         priority:     low | medium | high.
         project_dir:  Absolute path to the project the mission should act on —

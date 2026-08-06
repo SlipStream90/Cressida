@@ -6,7 +6,7 @@
 
 **Transform a plain-English software brief into a production-ready software system.**
 
-From research and architecture to implementation, review, deployment, and continuous learning — all coordinated by an autonomous team of specialized AI software engineers.
+From research and architecture to implementation, review, and continuous learning — coordinated by an autonomous team of specialized AI software engineers.
 
 <p align="center">
   <strong>Research</strong> •
@@ -23,13 +23,13 @@ From research and architecture to implementation, review, deployment, and contin
 ![License](https://img.shields.io/badge/License-MIT-success)
 ![MCP](https://img.shields.io/badge/MCP-Compatible-purple)
 ![Platform](https://img.shields.io/badge/macOS-Linux-Windows-orange)
-![Providers](https://img.shields.io/badge/Providers-9+-green)
+![Providers](https://img.shields.io/badge/Providers-8-green)
 
 </p>
 
 Supports
 
-**Claude Code • Anthropic • OpenAI • Gemini • Groq • Ollama • OpenCode**
+**Claude Code • Codex • OpenCode • Anthropic • OpenAI • Gemini • Groq • Ollama**
 
 ---
 
@@ -41,86 +41,36 @@ Supports
 
 # Overview
 
-Modern coding agents are extremely capable.
+Modern coding agents are extremely capable — but they're still fundamentally **single software engineers**. No org structure, no specialization, no dependency management, no architectural review, no accumulated experience.
 
-But they're still fundamentally **single software engineers**.
-
-They have no concept of
-
-- software engineering organizations
-- specialization
-- planning
-- dependency management
-- architectural review
-- accumulated experience
-- autonomous execution
-
-CRESSIDA changes that.
-
-Instead of prompting one LLM repeatedly, CRESSIDA assembles a **software engineering organization** consisting of twelve specialized AI engineers that collaborate to complete an entire software development lifecycle.
-
-A single plain-English brief becomes
+CRESSIDA assembles a **software engineering organization**: twelve specialized AI roles that collaborate through a full development lifecycle from one plain-English brief.
 
 ```
-Research
-↓
-Methodology Analysis
-↓
-Product Definition
-↓
-Architecture
-↓
-Human Approval
-↓
-Planning
-↓
-Parallel Implementation
-↓
-Review
-↓
-Continuous Learning
+Research → Methodology Analysis → Product Definition → Architecture
+  → Human Approval → Planning → Parallel Implementation → Review → Continuous Learning
 ```
 
-without requiring the user to manually orchestrate each step.
+No manual orchestration required.
 
 ---
 
 # Demo
 
-Create a file called `brief.md`
-
 ```text
+# brief.md
 Build a production-ready URL shortener.
-Requirements:
-- PostgreSQL
-- Docker
-- Authentication
-- REST API
-- React frontend
-- Unit tests
-- CI pipeline
+Requirements: PostgreSQL, Docker, Authentication, REST API, React frontend, Unit tests, CI pipeline
 ```
-
-Run
 
 ```bash
 cressida run brief.md
 ```
 
-CRESSIDA automatically performs
-
 ```
-✓ Market research
-✓ Technology evaluation
-✓ Product definition
-✓ Architecture
-✓ Dependency graph generation
-✓ Parallel task scheduling
-✓ Backend implementation
-✓ Frontend implementation
-✓ Infrastructure
-✓ Review
-✓ Learning
+✓ Market research        ✓ Architecture           ✓ Backend implementation
+✓ Technology evaluation  ✓ Dependency graph        ✓ Frontend implementation
+✓ Product definition     ✓ Parallel scheduling     ✓ Infrastructure
+                                                    ✓ Review  ✓ Learning
 Mission Complete
 ```
 
@@ -154,80 +104,19 @@ flowchart TD
 
 # Why CRESSIDA?
 
-Traditional coding assistants work like this
+Traditional coding assistants: `User → Prompt → LLM → Code → Prompt → LLM → More Code` — one context, one model, one engineer.
 
-```text
-User → Prompt → LLM → Code → Prompt → LLM → More Code
-```
-
-Everything lives inside one context. One model. One conversation. One engineer.
-
----
-
-CRESSIDA works like this
-
-```text
-User → Mission Commissioner → Research Team → Architecture Team → Planning Team → Implementation Teams → Review Team → Learning Layer → Mission Complete
-```
-
-Every specialist has
-
-- a dedicated role
-- dedicated tools
-- dedicated memory
-- dedicated context
-- dedicated objectives
+CRESSIDA: `User → Mission Commissioner → Research Team → Architecture Team → Planning Team → Implementation Teams → Review Team → Learning Layer → Mission Complete` — every specialist gets a dedicated role, tools, memory, context, and objectives.
 
 ---
 
 # Core Principles
 
-## Autonomous Software Engineering
-
-CRESSIDA treats software engineering as an organizational problem instead of a prompting problem. Specialized engineers collaborate exactly like a real engineering team.
-
----
-
-## Parallel Execution
-
-Independent work executes simultaneously whenever dependency analysis allows it.
-
-- Research, Methodology, Product Definition can execute together
-- Backend, Frontend, Infrastructure can execute together
-- Only true dependencies block progress
-
----
-
-## Mission Commissioning
-
-Before any agent executes, CRESSIDA commissions the mission. Every task is analyzed individually.
-
-For every task CRESSIDA determines
-
-- which agent should execute it
-- which tools it needs
-- which skills it needs
-- which model it should use
-
-This dramatically reduces context size while keeping every task focused.
-
----
-
-## Token Efficient
-
-Instead of exposing every tool, every skill, every model to every agent, CRESSIDA only exposes the minimum required resources. Smaller prompts. Cheaper execution. Better focus.
-
----
-
-## Provider Agnostic
-
-Run the exact same mission using Claude Code, Anthropic, OpenAI, Gemini, Groq, Ollama, or OpenCode — without changing your workflow.
-
----
-
-## Human Approval Gates
-
-Before implementation begins, BOND reviews the architecture. A mission can continue, reject itself, or escalate to a human before writing a single line of code.
+- **Autonomous Software Engineering** — specialized engineers collaborate like a real engineering team, not a single repeatedly-prompted model.
+- **Parallel Execution** — independent work runs simultaneously (Research/Methodology/Product Definition together; Backend/Frontend/Infrastructure together). Only genuine dependencies block progress.
+- **Mission Commissioning** — every task is analyzed before execution to pick its agent, tools, skills, and model tier, keeping prompts small and focused (see [Mission Commissioning](#mission-commissioning) below).
+- **Provider Agnostic** — the same mission runs unchanged on Claude Code, Codex, OpenCode, Anthropic, OpenAI, Gemini, Groq, or Ollama.
+- **Human Approval Gates** — BOND reviews the architecture before implementation starts; a mission can continue, reject itself, or escalate to a human before a line of code is written (see [Human Approval Gates](#human-approval-gates)).
 
 ---
 
@@ -235,18 +124,20 @@ Before implementation begins, BOND reviews the architecture. A mission can conti
 
 | Agent | Responsibility |
 |-------|----------------|
-| **M** | Mission commissioner, routing, orchestration and task dispatch |
-| **INTELLIGENCE** | Product research, PRDs and market analysis |
+| **M** | Mission commissioner — routing, orchestration, task dispatch |
+| **INTELLIGENCE** | Product research, PRDs, market analysis |
 | **LEITER** | Methodology research and technology validation |
-| **Q** | Software architecture, APIs and system design |
+| **Q** | Software architecture, APIs, system design |
 | **BOND** | Autonomous approval gate and architectural review |
-| **TANNER** | Planning, dependency graphs and execution scheduling |
+| **TANNER** | Planning, dependency graphs, execution scheduling |
 | **BRANCH** | Backend implementation |
-| **ROOK** | Frontend implementation |
-| **BOOTHROYD** | Infrastructure, Docker and deployment |
-| **REVIEW** | Testing, review and quality assurance |
-| **R** | Reflection, learning and long-term playbooks |
-| **MONEYPENNY** | Mission knowledge management and runtime tracking |
+| **ROOK** | Frontend implementation *(routed dynamically from the backlog)* |
+| **BOOTHROYD** | Infrastructure, Docker, deployment *(routed dynamically)* |
+| **REVIEW** | Testing, review, quality assurance |
+| **R** | Reflection, learning, long-term playbooks |
+| **MONEYPENNY** | Mission knowledge management and runtime tracking *(routed dynamically)* |
+
+Every mission always runs M, INTELLIGENCE, LEITER, Q, BOND, TANNER, BRANCH, REVIEW, and R. ROOK/BOOTHROYD/MONEYPENNY only spawn when TANNER's backlog contains matching work (frontend/infra/knowledge tasks respectively).
 
 ---
 
@@ -273,7 +164,7 @@ graph TD
 
 # Mission Commissioning
 
-One of CRESSIDA's defining features is its commissioning layer. Instead of blindly sending every task to a giant model with every available tool, every task is optimized before execution.
+Before any agent executes, every task is analyzed individually to determine which engineer owns it, which tools and reusable skills it needs, and which model tier its reasoning requires — instead of exposing every tool/skill/model to every agent. Smaller prompts, cheaper execution, better focus.
 
 ```mermaid
 flowchart LR
@@ -288,20 +179,11 @@ flowchart LR
     Model --> Execute
 ```
 
-For every task CRESSIDA decides
-
-- Which engineer owns the task
-- Which tools are required
-- Which reusable skills should be injected
-- Which model tier satisfies the reasoning requirement
-
-This reduces prompt size while improving execution quality.
-
 ---
 
 # Continuous Learning
 
-Every completed mission improves future missions.
+After every completed mission, CRESSIDA reflects on task outcomes, review scores, execution time, and failures — then distills the result into playbooks and reusable skills, not raw conversation history. Repeated lessons strengthen; unused ones decay. Every future mission starts smarter than the last.
 
 ```mermaid
 flowchart LR
@@ -312,13 +194,11 @@ flowchart LR
     Prompt --> NEXT[Next Mission]
 ```
 
-Instead of storing conversations, CRESSIDA stores distilled engineering experience. Successful solutions become reusable playbooks. Repeated lessons become stronger. Unused lessons decay naturally. Every future mission benefits from previous ones.
-
 ---
 
 # Human Approval Gates
 
-Software engineering shouldn't be fully autonomous. Critical architectural decisions deserve review.
+Critical architectural decisions deserve review before implementation begins:
 
 ```mermaid
 flowchart TD
@@ -328,7 +208,11 @@ flowchart TD
     BOND -->|Escalate| Human[Human Decision]
 ```
 
-This prevents poor architectural choices from propagating into implementation.
+Escalated missions wait for a decision:
+
+```bash
+cressida resolve-escalation mission_id "Approved"
+```
 
 ---
 
@@ -339,21 +223,12 @@ This prevents poor architectural choices from propagating into implementation.
 | Multi-Agent Architecture | No | Yes |
 | Dependency Graph Execution | No | Yes |
 | Parallel Scheduling | No | Yes |
-| Dynamic Tool Selection | No | Yes |
-| Dynamic Model Selection | No | Yes |
+| Dynamic Tool/Model Selection | No | Yes |
 | Human Approval Gates | No | Yes |
 | Provider Agnostic | Partial | Yes |
 | Self Learning | No | Yes |
-| MCP Server | Partial | Yes |
-| CLI | Partial | Yes |
-| Autonomous Daemon | No | Yes |
-| Mission Scheduling | No | Yes |
-
----
-
-# What's Next?
-
-The next section covers installation across macOS, Linux, Windows, Homebrew, Manual Installation, Claude Code, OpenAI, Gemini, Ollama, and OpenCode — followed by complete usage examples.
+| MCP Server + Auto-Invoke Skill | Partial | Yes |
+| Autonomous Daemon + Scheduling | No | Yes |
 
 ---
 
@@ -361,204 +236,88 @@ The next section covers installation across macOS, Linux, Windows, Homebrew, Man
 
 CRESSIDA supports macOS, Linux, Windows, WSL, Docker, and Homebrew — and automatically integrates with **Claude Code**, **opencode**, and **Codex** through MCP, registering itself as an auto-invoked skill in every client that supports one.
 
----
-
-# Requirements
+## Requirements
 
 | Requirement | Version |
 |-------------|----------|
 | Python | 3.11+ |
 | Git | Latest |
-| Claude Code *(optional)* | Latest |
+| Claude Code / Codex / OpenCode *(any one, optional)* | Latest |
 | Ollama *(optional)* | Latest |
 
----
+## Quick Install
 
-# Quick Install
-
-## macOS / Linux / WSL / Git Bash
+**macOS / Linux / WSL / Git Bash**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/SlipStream90/Cressida/MI6/install.sh | bash
 ```
 
-The installer clones CRESSIDA, creates an isolated virtual environment, installs dependencies, registers the MCP server with every client found on your machine (Claude Code, opencode, Codex), installs the auto-invoke skill into Claude Code and Codex, adds CLI commands, and verifies the installation. Restart whichever client(s) you use after installation.
-
----
-
-## Windows (PowerShell)
+**Windows (PowerShell)**
 
 ```powershell
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 irm https://raw.githubusercontent.com/SlipStream90/Cressida/MI6/install.ps1 | iex
 ```
 
-The TLS configuration fixes connection issues on older PowerShell versions. After installation restart whichever client(s) you use (Claude Code, opencode, Codex).
+Either installer clones CRESSIDA, creates an isolated virtual environment, installs dependencies, registers the MCP server with every client found on your machine (Claude Code, opencode, Codex), installs the auto-invoke skill into Claude Code and Codex, adds CLI commands, and verifies the installation. Restart whichever client(s) you use afterward.
 
----
-
-# Homebrew
+**Homebrew**
 
 ```bash
-brew tap SlipStream90/cressida
-brew install cressida
+brew tap SlipStream90/cressida && brew install cressida
 ```
 
-The Homebrew formula installs CRESSIDA, creates an isolated Python environment, installs CLI commands, and prepares MCP integration. Check installation with `brew info cressida`.
-
----
-
-# Manual Installation
-
-Clone the repository
+## Manual Installation
 
 ```bash
 git clone https://github.com/SlipStream90/Cressida.git
 cd Cressida
-```
-
-Create a virtual environment
-
-```bash
 python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+python onboard.py --provider anthropic --register
 ```
 
-Linux / macOS
+`--register` configures MCP and installs the auto-invoke skill for every client found on your machine, verifies providers, and prints manual registration commands for anything it couldn't reach automatically.
 
-```bash
-source .venv/bin/activate
-```
-
-Windows
-
-```powershell
-.venv\Scripts\activate
-```
-
-Install
-
-```bash
-python onboard.py --provider anthropic
-```
-
-or
-
-```bash
-pip install -e ".[anthropic]"
-```
-
-The onboarding process validates Python, installs dependencies, and (with `--register`) configures MCP and installs the auto-invoke skill for every client found on your machine, verifies providers, and prints registration commands for anything it couldn't reach automatically.
-
----
-
-# Docker
-
-Docker support is available for running CRESSIDA in isolated environments.
+## Docker
 
 ```bash
 docker compose up
 ```
 
-Docker is recommended for CI, self-hosting, reproducible environments, and development.
+Recommended for CI, self-hosting, and reproducible environments.
 
 ---
 
 # Provider Configuration
 
-CRESSIDA automatically detects whichever provider you already use. No configuration changes are required when switching providers.
+CRESSIDA automatically detects whichever provider you already use — no configuration changes needed when switching.
 
-Priority: Environment Variable → Claude Code CLI → OpenCode CLI → Ollama
+**Priority:** `CRESSIDA_PROVIDER` env var → Anthropic/OpenAI/Gemini/Groq API keys → Claude Code CLI → OpenCode CLI → Codex CLI → Ollama
 
----
+| Provider | Setup |
+|---|---|
+| Anthropic | `export ANTHROPIC_API_KEY=sk-...` |
+| OpenAI | `export OPENAI_API_KEY=sk-...` |
+| Gemini | `export GEMINI_API_KEY=...` |
+| Groq | `export GROQ_API_KEY=...` |
+| Ollama | `ollama serve`, then `--provider ollama --ollama-model qwen2.5` |
+| Claude Code | No API key — auto-discovered if logged in. `--provider claude_cli` |
+| OpenCode | No API key — auto-discovered if logged in. `--provider opencode` |
+| Codex | No API key — auto-discovered if logged in. `--provider codex` |
 
-## Anthropic
-
-```bash
-export ANTHROPIC_API_KEY=sk-...
-```
-
-Run `cressida run brief.md`
-
----
-
-## OpenAI
-
-```bash
-export OPENAI_API_KEY=sk-...
-```
-
----
-
-## Gemini
-
-```bash
-export GEMINI_API_KEY=...
-```
-
----
-
-## Groq
-
-```bash
-export GROQ_API_KEY=...
-```
-
----
-
-## Ollama
-
-Start Ollama with `ollama serve`, then run
-
-```bash
-cressida run brief.md --provider ollama
-```
-
-Specify a model
-
-```bash
-cressida run brief.md --provider ollama --ollama-model qwen2.5
-```
-
----
-
-## Claude Code
-
-No API key required. If Claude Code is already installed and authenticated, CRESSIDA automatically discovers it.
-
-```bash
-cressida run brief.md --provider claude_cli
-```
-
-or simply `cressida run brief.md` and provider detection happens automatically.
-
----
-
-## OpenCode
-
-Already logged in? Nothing else required.
-
-```bash
-cressida run brief.md --provider opencode
-```
+The three CLI providers each run their own real agentic tool-use loop per task (not a single-shot completion) — Cressida shells out to `claude -p` / `opencode run` / `codex exec` non-interactively and reads back the final result.
 
 ---
 
 # Verify Installation
 
-Run `cressida --help` — expected output:
-
-```
-CRESSIDA CLI
-run
-daemon
-dashboard
-resolve-escalation
-status
-learning
-...
+```bash
+cressida --help          # run | daemon | dashboard | resolve-escalation | status | learning | ...
 ```
 
-Verify MCP registration inside Claude Code with `cressida_status` — expected:
+Inside Claude Code, opencode, or Codex, call `cressida_status` — expect:
 
 ```
 ✓ MCP Server Connected
@@ -571,117 +330,49 @@ Verify MCP registration inside Claude Code with `cressida_status` — expected:
 
 # Your First Mission
 
-Create `brief.md`
-
 ```text
+# brief.md
 Build a production-ready Todo REST API.
-Requirements:
-- PostgreSQL
-- JWT Authentication
-- Docker
-- OpenAPI
-- Unit Tests
-- CI/CD
+Requirements: PostgreSQL, JWT Authentication, Docker, OpenAPI, Unit Tests, CI/CD
 ```
-
-Run `cressida run brief.md` — CRESSIDA automatically handles Research → Methodology → Architecture → Planning → Implementation → Review → Learning.
-
----
-
-# Project Directory
-
-Run against an existing repository
 
 ```bash
-cressida run brief.md --project-dir ~/Projects/MyApp
+cressida run brief.md
 ```
 
-or
+Run against an existing repository instead of a fresh one with `--project-dir ~/Projects/MyApp` (works on monoliths, microservices, and legacy codebases too — only implementation files are written into the target project; everything else stays under `missions/`).
 
-```bash
-cressida run brief.md --project-dir C:\Projects\MyApp
-```
-
-CRESSIDA stores research, architecture, reviews, and mission history inside the mission directory while implementation files are written directly into the target project.
-
----
-
-# Mission Outputs
-
-Each execution generates
+## Mission Outputs
 
 ```
 missions/
-└── mission-001/
-    ├── Research.md
-    ├── Methodology.md
-    ├── PRD.md
-    ├── Architecture.md
-    ├── Planning.md
-    ├── Review.md
-    ├── Logs/
-    ├── Decisions/
-    └── Metrics/
+└── mission_2026_001/
+    ├── brief.md
+    ├── intelligence/{research_report,PRD,Roadmap,methodology_brief}.md
+    ├── ARCHITECTURE.md
+    ├── bond_decisions/
+    ├── backlog.json
+    ├── implementation/
+    ├── review_report.md
+    └── execution_state.json
 ```
 
-Everything required to understand the mission is preserved automatically.
-
----
-
-# Next Steps
-
-The next section covers CLI Commands, MCP Integration, Daemon Mode, Mission Scheduling, Dashboard, Monitoring, Obsidian Integration, Existing Project Workflows, and Autonomous Operation.
+Every engineering decision is reproducible from what's on disk.
 
 ---
 
 # Usage
 
-CRESSIDA supports four primary execution modes.
-
 | Mode | Purpose |
 |-------|----------|
-| CLI | Execute one-off software engineering missions |
-| MCP Server | Integrate directly into Claude Code |
+| CLI | One-off missions (`cressida run brief.md`) |
+| MCP Server | Integrated directly into Claude Code / opencode / Codex |
 | Daemon | Fully autonomous background execution |
-| Dashboard | Monitor mission progress in real time |
-
----
-
-# Running a Mission
-
-The simplest workflow. Create a brief and execute
-
-```bash
-cressida run brief.md
-```
-
-Mission execution: Research → Methodology → Product Definition → Architecture → BOND Approval → Planning → Parallel Implementation → Review → Reflection → Mission Complete.
-
----
-
-# CLI Commands
-
-Run a mission
-
-```bash
-cressida run brief.md
-```
-
-Specify provider
+| Dashboard | Real-time mission monitoring |
 
 ```bash
 cressida run brief.md --provider openai
-```
-
-Run against an existing repository
-
-```bash
 cressida run brief.md --project-dir ~/Projects/MyApp
-```
-
-Specify an Ollama model
-
-```bash
 cressida run brief.md --provider ollama --ollama-model qwen2.5
 ```
 
@@ -695,7 +386,7 @@ Useful MCP tools: `run_mission()`, `mission_status()`, `mission_progress()`, `le
 
 ## Auto-invocation (skills)
 
-Claude Code and Codex both support **skills** — description-triggered instructions the agent consults automatically, without you naming CRESSIDA explicitly. `onboard.py --register` installs a `cressida` skill (`skills/cressida/SKILL.md` in this repo) into both, so a project-sized build request in an ordinary conversation gets delegated to a mission instead of built turn-by-turn in that session. It explicitly falls back to a direct build if the MCP server isn't connected, so a missing/misconfigured server never blocks the conversation.
+Claude Code and Codex both support **skills** — description-triggered instructions the agent consults automatically, without you naming CRESSIDA explicitly. `onboard.py --register` installs a `cressida` skill (`skills/cressida/SKILL.md`) into both, so a project-sized build request in an ordinary conversation gets delegated to a mission instead of built turn-by-turn in that session. It falls back to a direct build if the MCP server isn't connected, so a missing/misconfigured server never blocks the conversation.
 
 opencode has no skill mechanism yet, so it gets the equivalent instruction appended to its `AGENTS.md` context file instead.
 
@@ -703,31 +394,13 @@ opencode has no skill mechanism yet, so it gets the equivalent instruction appen
 
 # Daemon Mode
 
-CRESSIDA can operate completely autonomously.
-
-Start the daemon
-
 ```bash
 cressida daemon
-```
-
-Specify provider
-
-```bash
 cressida daemon --provider anthropic
-```
-
-Custom polling
-
-```bash
 cressida daemon --poll-interval 5 --status-port 7437
 ```
 
-The daemon launches Mission watcher, Scheduler, Stall monitor, Status server, and Learning engine simultaneously.
-
----
-
-# Autonomous Workflow
+Launches the Mission Watcher, Scheduler, Stall Monitor, Status Server, and Learning Engine together.
 
 ```mermaid
 flowchart TD
@@ -739,11 +412,9 @@ flowchart TD
     Learning --> Idle
 ```
 
----
+## Inbox & Scheduled Missions
 
-# Inbox Missions
-
-Drop a YAML file into `missions/inbox/`
+Drop a YAML file into `missions/inbox/` and the daemon picks it up within seconds — no CLI interaction required:
 
 ```yaml
 brief: Build a Todo API
@@ -752,25 +423,15 @@ provider: anthropic
 project_dir: ~/Projects/Todo
 ```
 
-Within seconds the daemon discovers it, creates a mission, and begins execution. No CLI interaction required.
-
----
-
-# Scheduled Missions
-
-Recurring engineering tasks — security audits, dependency upgrades, performance reviews, documentation generation — can all be scheduled.
+For recurring work (security audits, dependency upgrades, doc generation), drop one into `missions/scheduled/` instead:
 
 ```yaml
-schedule: "@weekly"
+schedule: "@weekly"   # @hourly | @daily | @weekly | @monthly | ISO timestamp | 5-field cron
 brief: Run a security audit
 project_dir: ~/Projects/MyApp
 ```
 
-Supported: `@hourly`, `@daily`, `@weekly`, `@monthly`, ISO timestamps.
-
----
-
-# Mission Lifecycle
+## Mission Lifecycle
 
 ```mermaid
 stateDiagram-v2
@@ -786,96 +447,21 @@ stateDiagram-v2
     Reflection --> Completed
 ```
 
----
-
-# Human Approval
-
-Not every mission should continue automatically. After architecture, BOND evaluates system design, methodology, and implementation plan.
-
-Possible outcomes: Approve, Reject, or Escalate.
-
-Escalated missions wait for
+## Monitoring
 
 ```bash
-cressida resolve-escalation mission_id "Approved"
-```
-
-before continuing.
-
----
-
-# Live Dashboard
-
-Launch with `cressida dashboard`
-
-Dashboard includes: Mission timeline, Active agents, Current task, Progress bars, File activity, Errors, and Stall detection — all refreshed automatically.
-
----
-
-# Status Server
-
-The daemon exposes `localhost:7437`
-
-```bash
-curl localhost:7437/health
+cressida dashboard                 # Mission timeline, active agents, progress, stall detection
+curl localhost:7437/health         # Daemon status server
 curl localhost:7437/status
 ```
 
-Useful for dashboards, monitoring, integrations, and automation.
-
----
-
-# Progress Monitoring
-
-Track a mission with `mission_progress(mission_id="mission_001")`
-
-Returns: Current phase, Active tasks, Recent files, Current agent, Completion %, and Stall status. No polling logic required.
-
----
-
-# Existing Projects
-
-CRESSIDA isn't limited to greenfield development. Run against monoliths, microservices, legacy systems, and enterprise repositories.
-
-```bash
-cressida run brief.md --project-dir ~/Projects/LegacyCRM
-```
-
-Mission artifacts remain inside `missions/`. Only implementation files are written into the target project.
-
----
-
-# Mission Directory
-
-Every mission is self-contained.
-
-```
-missions/
-└── mission_2026_001/
-    ├── brief.md
-    ├── research.md
-    ├── methodology.md
-    ├── prd.md
-    ├── architecture.md
-    ├── planning.md
-    ├── review.md
-    ├── logs/
-    ├── metrics/
-    ├── learning/
-    └── outputs/
-```
-
-Nothing is hidden. Every engineering decision remains reproducible.
+Or poll programmatically: `mission_progress(mission_id="mission_001")` returns current phase, active tasks, recent files, completion %, and stall status.
 
 ---
 
 # Obsidian Integration
 
-CRESSIDA optionally mirrors every mission into an Obsidian knowledge graph. Automatically synchronized: Research, PRDs, Architecture, Reviews, Decisions, Lessons, and Mission Logs. Your engineering knowledge becomes searchable across every completed mission.
-
----
-
-# Mission Knowledge Flow
+CRESSIDA optionally mirrors every mission into an Obsidian knowledge graph — research, PRDs, architecture, reviews, decisions, and lessons, automatically synchronized and searchable across every completed mission.
 
 ```mermaid
 flowchart LR
@@ -888,280 +474,80 @@ flowchart LR
 
 ---
 
-# Multi-Provider Execution
-
-Switch providers instantly
-
-```bash
-cressida run brief.md --provider anthropic
-cressida run brief.md --provider openai
-cressida run brief.md --provider gemini
-cressida run brief.md --provider groq
-cressida run brief.md --provider ollama
-```
-
-No code changes required. No workflow changes required.
-
----
-
 # Internal Architecture
-
-CRESSIDA is designed as a collection of loosely coupled subsystems rather than a monolithic agent.
 
 ```
                          CRESSIDA
                              │
 ─────────────────────────────┼─────────────────────────────
- Orchestration      Providers       Learning        Runtime
-      │                 │               │              │
- Coordinator      OpenAI          Reflection      Dashboard
- Dispatcher       Anthropic       Playbooks       Daemon
- Scheduler        Claude CLI      Skills          MCP
- Executor         Gemini          Reward          Monitoring
- Context          Groq            Memory          Progress
-                  Ollama
+ Orchestration      Providers            Learning        Runtime
+      │                 │                    │              │
+ Coordinator      Anthropic/OpenAI/     Reflection      Dashboard
+ Dispatcher       Gemini/Groq/Ollama    Playbooks       Daemon
+ Scheduler        Claude CLI/OpenCode   Skills          MCP
+ Executor         Codex CLI             Reward          Monitoring
+ Context                                Memory          Progress
 ```
 
 Each subsystem is independently replaceable.
 
----
-
-# Project Structure
-
 ```
 cressida/
-├── agents/
-│   ├── specifications
-│   ├── constitution
-│   └── prompts
-├── orchestration/
-│   ├── coordinator
-│   ├── dispatcher
-│   ├── scheduler
-│   ├── executor
-│   └── dependency_graph
-├── providers/
-│   ├── anthropic
-│   ├── openai
-│   ├── gemini
-│   ├── groq
-│   ├── ollama
-│   └── claude_cli
-├── learning/
-│   ├── reflection
-│   ├── playbooks
-│   ├── skills
-│   ├── rewards
-│   └── curator
-├── memory/
-├── knowledge/
-├── missions/
-├── dashboard/
-├── autonomy/
-├── cli/
-├── docs/
-└── tests/
+├── agents/            specifications, constitution, prompts
+├── orchestration/      coordinator, dispatcher, scheduler, executor, dependency_graph
+├── core/providers/     anthropic, openai, gemini, groq, ollama, claude_cli, opencode, codex
+├── learning/           reflection, playbooks, skills, rewards, curator
+├── skills/             auto-invoke skill (Claude Code / Codex)
+├── memory/  knowledge/  missions/  dashboard/  autonomy/  cli/  docs/  tests/
 ```
-
----
-
-# Commissioning Engine
-
-The commissioning layer is one of CRESSIDA's defining architectural features. Instead of treating every task equally, each task is optimized independently.
-
-```mermaid
-flowchart TD
-    TASK --> Classifier
-    Classifier --> Agent[Agent Selection]
-    Classifier --> Model[Model Selection]
-    Classifier --> Tools[Tool Selection]
-    Classifier --> Skills[Skill Selection]
-    Agent --> Execute[Execution]
-    Model --> Execute
-    Tools --> Execute
-    Skills --> Execute
-```
-
-For every task CRESSIDA determines responsible engineer, reasoning complexity, cheapest acceptable model, required tools, and required skills before execution begins.
-
----
-
-# Dependency Graph Execution
-
-Unlike sequential coding assistants, CRESSIDA executes work according to dependency constraints.
-
-```mermaid
-graph TD
-    Research --> Architecture
-    Methodology --> Architecture
-    Architecture --> Planning
-    Planning --> Backend
-    Planning --> Frontend
-    Planning --> Infrastructure
-    Backend --> Review
-    Frontend --> Review
-    Infrastructure --> Review
-```
-
-Independent work executes simultaneously. Only genuine dependencies block progress.
-
----
-
-# Reflection Engine
-
-After every completed mission, CRESSIDA reflects on execution quality.
-
-Reflection considers: task outcomes, review scores, execution time, feedback, failures, and successful patterns.
-
-The output becomes playbooks, reusable skills, engineering heuristics, and anti-patterns — instead of conversation history.
-
----
-
-# Knowledge System
-
-Knowledge exists across several layers.
-
-```
-Mission → Reflection → Playbook → Skill → Prompt Context → Future Mission
-```
-
-Lessons become stronger when repeated and weaker when unused, allowing knowledge to evolve naturally.
 
 ---
 
 # Security
 
-CRESSIDA is designed around the principle of least privilege.
-
-Examples include: Dynamic tool exposure, Human approval gates, Provider abstraction, Mission isolation, Project directory validation, Loopback-only local services, and Build-failing privacy checks.
-
----
-
-# Design Principles
-
-Every subsystem follows several core principles.
-
-**Minimal Context** — Only provide the information required for a task.
-
-**Replaceability** — Every provider can be swapped without changing orchestration.
-
-**Deterministic Orchestration** — Dependency graphs determine execution order. Never prompts.
-
-**Human Oversight** — Architectural decisions remain reviewable.
-
-**Continuous Learning** — Experience accumulates across missions.
-
-**Provider Independence** — No vendor lock-in.
-
----
-
-# Performance Goals
-
-CRESSIDA is designed to optimize prompt size, execution quality, engineering consistency, parallelism, model utilization, and engineering reuse — rather than maximizing raw model intelligence.
+Designed around least privilege: dynamic per-task tool exposure, human approval gates, a pre-mission git snapshot for reversibility, a hardcoded dangerous-keyword filter behind BOND's approval (send/publish/delete/merge/push and similar are stripped regardless of what was approved upstream), project-directory validation, and loopback-only local services.
 
 ---
 
 # Roadmap
 
-## Near Term
+**Near term** — Kubernetes execution backend, distributed mission execution, web UI, VS Code extension, visual dependency graph, mission replay.
 
-- Kubernetes execution backend
-- Distributed mission execution
-- Web UI
-- VS Code extension
-- Visual dependency graph
-- Mission replay
+**Medium term** — team collaboration, multi-repository missions, remote execution, distributed schedulers, agent marketplace.
 
-## Medium Term
-
-- Team collaboration
-- Multi-repository missions
-- Remote execution
-- Distributed schedulers
-- Agent marketplace
-
-## Long Term
-
-- Reinforcement learning from engineering outcomes
-- Autonomous benchmarking
-- Mission simulation
-- Dynamic agent generation
-- Multi-machine orchestration
-
----
-
-# Documentation
-
-Detailed documentation is available for Agent Specifications, Architecture, Commissioning, Learning, Memory, Providers, Security, Daemon, Dashboard, Obsidian, MCP, and API Reference.
+**Long term** — reinforcement learning from engineering outcomes, autonomous benchmarking, mission simulation, dynamic agent generation, multi-machine orchestration.
 
 ---
 
 # Contributing
 
-Contributions are welcome. Before opening a pull request please
-
 1. Open an issue
-2. Discuss large architectural changes
+2. Discuss large architectural changes before starting
 3. Ensure all tests pass
 4. Follow formatting guidelines
 
----
-
-# Development
-
-Clone
+## Development
 
 ```bash
 git clone https://github.com/SlipStream90/Cressida
-```
-
-Install
-
-```bash
 python onboard.py
-```
-
-Run tests
-
-```bash
 pytest
-```
-
-Start dashboard
-
-```bash
-cressida dashboard
-```
-
-Start daemon
-
-```bash
-cressida daemon
+cressida dashboard   # or: cressida daemon
 ```
 
 ---
 
-# Frequently Asked Questions
+# FAQ
 
-## Does CRESSIDA require Claude?
+**Does CRESSIDA require Claude?** No — Claude Code, Codex, OpenCode, Anthropic, OpenAI, Gemini, Groq, and Ollama are all supported.
 
-No. It supports multiple providers including Anthropic, OpenAI, Gemini, Groq, Ollama, Claude Code, and OpenCode.
+**Can I use local models?** Yes, via Ollama.
 
-## Can I use local models?
+**Does it work on existing projects?** Yes — pass `--project-dir` and it operates directly on the existing repository.
 
-Yes. Ollama is supported out of the box.
+**Does it remember previous missions?** Yes — engineering experience is distilled into reusable playbooks and skills (see [Continuous Learning](#continuous-learning)).
 
-## Does it work on existing projects?
-
-Yes. Specify `--project-dir` and CRESSIDA operates directly on existing repositories.
-
-## Does it remember previous missions?
-
-Yes. Engineering experience is distilled into reusable playbooks and skills.
-
-## Is it autonomous?
-
-Yes. CRESSIDA can execute continuously using the daemon scheduler, or interactively through the CLI and MCP server.
+**Is it autonomous?** Yes — run it interactively via CLI/MCP, or continuously via the daemon's inbox and scheduler.
 
 ---
 
