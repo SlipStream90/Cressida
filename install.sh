@@ -4,7 +4,8 @@
 #   curl -fsSL https://raw.githubusercontent.com/SlipStream90/Cressida/main/install.sh | bash
 #
 # Clones the repo into ~/.cressida/src, builds an isolated virtualenv,
-# installs CRESSIDA, and wires up the MCP server for Claude Code.
+# installs CRESSIDA, and wires up the MCP server + auto-invoke skill for
+# whichever of Claude Code / opencode / Codex are found on this machine.
 #
 # Overridable via env vars:
 #   CRESSIDA_REPO      git URL           (default: the public GitHub repo)
@@ -80,5 +81,7 @@ c "Wiring up the MCP server"
 
 c "Done. Installed at $HOME_DIR"
 echo "  CLI:    $(dirname "$VPY")/cressida run brief.md"
-echo "  MCP:    restart Claude Code, then call the cressida_status tool"
+echo "  MCP:    registered with Claude Code / opencode / Codex, whichever are on PATH"
+echo "  Skill:  installed for auto-invocation in Claude Code / Codex (opencode: see AGENTS.md)"
+echo "          restart whichever client(s) you use, then call the cressida_status tool"
 echo "  Update: re-run this installer any time (it pulls the latest and reinstalls)"

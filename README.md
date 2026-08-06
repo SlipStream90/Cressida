@@ -359,7 +359,7 @@ The next section covers installation across macOS, Linux, Windows, Homebrew, Man
 
 # Installation
 
-CRESSIDA supports macOS, Linux, Windows, WSL, Docker, and Homebrew — and automatically integrates with **Claude Code** through MCP.
+CRESSIDA supports macOS, Linux, Windows, WSL, Docker, and Homebrew — and automatically integrates with **Claude Code**, **opencode**, and **Codex** through MCP, registering itself as an auto-invoked skill in every client that supports one.
 
 ---
 
@@ -382,7 +382,7 @@ CRESSIDA supports macOS, Linux, Windows, WSL, Docker, and Homebrew — and autom
 curl -fsSL https://raw.githubusercontent.com/SlipStream90/Cressida/MI6/install.sh | bash
 ```
 
-The installer clones CRESSIDA, creates an isolated virtual environment, installs dependencies, registers the MCP server, adds CLI commands, and verifies the installation. Restart Claude Code after installation.
+The installer clones CRESSIDA, creates an isolated virtual environment, installs dependencies, registers the MCP server with every client found on your machine (Claude Code, opencode, Codex), installs the auto-invoke skill into Claude Code and Codex, adds CLI commands, and verifies the installation. Restart whichever client(s) you use after installation.
 
 ---
 
@@ -393,7 +393,7 @@ The installer clones CRESSIDA, creates an isolated virtual environment, installs
 irm https://raw.githubusercontent.com/SlipStream90/Cressida/MI6/install.ps1 | iex
 ```
 
-The TLS configuration fixes connection issues on older PowerShell versions. After installation restart Claude Code.
+The TLS configuration fixes connection issues on older PowerShell versions. After installation restart whichever client(s) you use (Claude Code, opencode, Codex).
 
 ---
 
@@ -447,7 +447,7 @@ or
 pip install -e ".[anthropic]"
 ```
 
-The onboarding process validates Python, installs dependencies, configures MCP, verifies providers, and prints registration commands.
+The onboarding process validates Python, installs dependencies, and (with `--register`) configures MCP and installs the auto-invoke skill for every client found on your machine, verifies providers, and prints registration commands for anything it couldn't reach automatically.
 
 ---
 
@@ -689,9 +689,15 @@ cressida run brief.md --provider ollama --ollama-model qwen2.5
 
 # MCP Integration
 
-CRESSIDA can be used directly inside Claude Code. Once installed, every mission can be started without leaving your editor.
+CRESSIDA registers as an MCP server with Claude Code, opencode, and Codex — once installed, every mission can be started without leaving your editor, in whichever of the three you use.
 
 Useful MCP tools: `run_mission()`, `mission_status()`, `mission_progress()`, `learning_playbook()`, `learning_nudge()`, `cressida_status()`
+
+## Auto-invocation (skills)
+
+Claude Code and Codex both support **skills** — description-triggered instructions the agent consults automatically, without you naming CRESSIDA explicitly. `onboard.py --register` installs a `cressida` skill (`skills/cressida/SKILL.md` in this repo) into both, so a project-sized build request in an ordinary conversation gets delegated to a mission instead of built turn-by-turn in that session. It explicitly falls back to a direct build if the MCP server isn't connected, so a missing/misconfigured server never blocks the conversation.
+
+opencode has no skill mechanism yet, so it gets the equivalent instruction appended to its `AGENTS.md` context file instead.
 
 ---
 

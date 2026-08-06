@@ -3,7 +3,8 @@
 #   irm https://raw.githubusercontent.com/SlipStream90/Cressida/main/install.ps1 | iex
 #
 # Clones the repo into %USERPROFILE%\.cressida\src, builds an isolated venv,
-# installs CRESSIDA, and wires up the MCP server for Claude Code.
+# installs CRESSIDA, and wires up the MCP server + auto-invoke skill for
+# whichever of Claude Code / opencode / Codex are found on this machine.
 #
 # Override via env vars before running: $env:CRESSIDA_BRANCH, $env:CRESSIDA_PROVIDER, etc.
 $ErrorActionPreference = "Stop"
@@ -69,5 +70,7 @@ Info "Wiring up the MCP server"
 
 Info "Done. Installed at $HomeDir"
 Write-Host "  CLI:    $(Join-Path $Venv 'Scripts\cressida.exe') run brief.md"
-Write-Host "  MCP:    restart Claude Code, then call the cressida_status tool"
+Write-Host "  MCP:    registered with Claude Code / opencode / Codex, whichever are on PATH"
+Write-Host "  Skill:  installed for auto-invocation in Claude Code / Codex (opencode: see AGENTS.md)"
+Write-Host "          restart whichever client(s) you use, then call the cressida_status tool"
 Write-Host "  Update: re-run this installer any time (it pulls the latest and reinstalls)"
