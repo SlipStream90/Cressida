@@ -39,6 +39,64 @@ Supports
 
 ---
 
+# Installation
+
+CRESSIDA supports macOS, Linux, Windows, WSL, Docker, and Homebrew — and automatically integrates with **Claude Code**, **opencode**, and **Codex** through MCP, registering itself as an auto-invoked skill in every client that supports one.
+
+## Requirements
+
+| Requirement | Version |
+|-------------|----------|
+| Python | 3.11+ |
+| Git | Latest |
+| Claude Code / Codex / OpenCode *(any one, optional)* | Latest |
+| Ollama *(optional)* | Latest |
+
+## Quick Install
+
+**macOS / Linux / WSL / Git Bash**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SlipStream90/Cressida/MI6/install.sh | bash
+```
+
+**Windows (PowerShell)**
+
+```powershell
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+irm https://raw.githubusercontent.com/SlipStream90/Cressida/MI6/install.ps1 | iex
+```
+
+Either installer clones CRESSIDA, creates an isolated virtual environment, installs dependencies, registers the MCP server with every client found on your machine (Claude Code, opencode, Codex), installs the auto-invoke skill into Claude Code and Codex, adds CLI commands, and verifies the installation. Restart whichever client(s) you use afterward.
+
+**Homebrew**
+
+```bash
+brew tap SlipStream90/cressida && brew install cressida
+```
+
+## Manual Installation
+
+```bash
+git clone https://github.com/SlipStream90/Cressida.git
+cd Cressida
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+python onboard.py --provider anthropic --register
+```
+
+`--register` configures MCP and installs the auto-invoke skill for every client found on your machine, verifies providers, and prints manual registration commands for anything it couldn't reach automatically.
+
+## Docker
+
+```bash
+docker compose up
+```
+
+Recommended for CI, self-hosting, and reproducible environments.
+
+---
+
 # Overview
 
 Modern coding agents are extremely capable — but they're still fundamentally **single software engineers**. No org structure, no specialization, no dependency management, no architectural review, no accumulated experience.
@@ -117,6 +175,8 @@ CRESSIDA: `User → Mission Commissioner → Research Team → Architecture Team
 - **Mission Commissioning** — every task is analyzed before execution to pick its agent, tools, skills, and model tier, keeping prompts small and focused (see [Mission Commissioning](#mission-commissioning) below).
 - **Provider Agnostic** — the same mission runs unchanged on Claude Code, Codex, OpenCode, Anthropic, OpenAI, Gemini, Groq, or Ollama.
 - **Human Approval Gates** — BOND reviews the architecture before implementation starts; a mission can continue, reject itself, or escalate to a human before a line of code is written (see [Human Approval Gates](#human-approval-gates)).
+- **Failsafe Execution** — transient failures retry automatically with backoff, BOND's decision parsing prefers structured JSON over free-text markdown, and a crashed or escalated mission resumes instead of restarting from scratch — already-completed tasks are never re-run (see [Reliability & Live Monitoring](#reliability--live-monitoring)).
+- **Retrieval-Augmented Memory** — research agents check a local, persistent knowledge store before hitting the live web, and every web result and every mission's distilled lessons feed back into it, so later missions get faster, cache-hit answers to questions earlier ones already answered (see [Continuous Learning](#continuous-learning)).
 
 ---
 
@@ -194,6 +254,16 @@ flowchart LR
     Prompt --> NEXT[Next Mission]
 ```
 
+## Retrieval (RAG)
+
+LEITER and INTELLIGENCE's `query_memory` calls now run through a two-tier retrieval router before any live search happens:
+
+1. **Persistent store first** — a local FAISS-backed index (checked via `query_memory`) is searched for a relevant, sufficiently fresh match. Staleness thresholds are topic-aware: fast-moving library/version docs go stale sooner than architectural patterns.
+2. **Live web fallback** — on a miss (empty store, low-confidence match, or stale doc), `web_search`/`fetch_url` run as before, results are passed through a boilerplate-stripping extractor and a query-focused summarizer, and the summary is written back into the store — so the next mission that asks a similar question gets a cache hit instead of repeating the same web search.
+3. **Learning feedback loop** — every mission's distilled lessons (the reflection/playbook pipeline above) are also ingested into the same store, so architectural decisions and past solutions become searchable context for future missions automatically, with no separate crawler step.
+
+No new tool grants were needed for this — it lives entirely behind the existing `query_memory` tool surface.
+
 ---
 
 # Human Approval Gates
@@ -216,6 +286,31 @@ cressida resolve-escalation mission_id "Approved"
 
 ---
 
+# Reliability & Live Monitoring
+
+## Live progress, no polling
+
+Every mission — headless (e.g. driven from opencode or Claude Code via MCP) or interactive — writes `missions/<id>/live_events.jsonl` as it runs: one line per lifecycle event (task started/completed/failed, mission phase changes, gate decisions), the moment it happens. `cressida watch` tails that file instead of repeatedly calling `mission_status`:
+
+```bash
+cressida watch                      # auto-attaches to the most recently active mission
+cressida watch mission_20260810_1200 --tail 30 --poll-interval 0.5
+```
+
+It shows the mission's current phase, a scrolling tail of recent events, and a "Ns since last event" heartbeat — so a long-running phase reads as "still working" instead of looking indistinguishable from a hang. When Cressida spawns a mission via its MCP server, it now runs as a hidden background process (no popup console window) — `cressida watch` is the live view for that case.
+
+## Automatic retry and resume
+
+- **Transient-failure retry** — task execution retries automatically (2 retries, exponential backoff) for the transient process-termination exit-code class seen under Windows job-object/console kills, instead of writing off the whole mission on an environmental blip.
+- **BOND gate hardening** — the approval gate always prefers BOND's structured JSON decision over free-text markdown when both exist (rather than racing on file-modification time), and logs a warning whenever it has to fall back to markdown parsing at all.
+- **Resume** — re-running `cressida run` with the same `--mission-id` rehydrates `execution_state.json`: tasks already COMPLETED are skipped, FAILED tasks are retried, and nothing already done gets re-run. A crashed or escalated mission doesn't mean starting over.
+
+```bash
+cressida run brief.md --mission-id mission_20260810_1200   # resumes if that mission already has progress on disk
+```
+
+---
+
 # Feature Comparison
 
 | Capability | Traditional Coding Agents | CRESSIDA |
@@ -229,64 +324,6 @@ cressida resolve-escalation mission_id "Approved"
 | Self Learning | No | Yes |
 | MCP Server + Auto-Invoke Skill | Partial | Yes |
 | Autonomous Daemon + Scheduling | No | Yes |
-
----
-
-# Installation
-
-CRESSIDA supports macOS, Linux, Windows, WSL, Docker, and Homebrew — and automatically integrates with **Claude Code**, **opencode**, and **Codex** through MCP, registering itself as an auto-invoked skill in every client that supports one.
-
-## Requirements
-
-| Requirement | Version |
-|-------------|----------|
-| Python | 3.11+ |
-| Git | Latest |
-| Claude Code / Codex / OpenCode *(any one, optional)* | Latest |
-| Ollama *(optional)* | Latest |
-
-## Quick Install
-
-**macOS / Linux / WSL / Git Bash**
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/SlipStream90/Cressida/MI6/install.sh | bash
-```
-
-**Windows (PowerShell)**
-
-```powershell
-[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-irm https://raw.githubusercontent.com/SlipStream90/Cressida/MI6/install.ps1 | iex
-```
-
-Either installer clones CRESSIDA, creates an isolated virtual environment, installs dependencies, registers the MCP server with every client found on your machine (Claude Code, opencode, Codex), installs the auto-invoke skill into Claude Code and Codex, adds CLI commands, and verifies the installation. Restart whichever client(s) you use afterward.
-
-**Homebrew**
-
-```bash
-brew tap SlipStream90/cressida && brew install cressida
-```
-
-## Manual Installation
-
-```bash
-git clone https://github.com/SlipStream90/Cressida.git
-cd Cressida
-python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-python onboard.py --provider anthropic --register
-```
-
-`--register` configures MCP and installs the auto-invoke skill for every client found on your machine, verifies providers, and prints manual registration commands for anything it couldn't reach automatically.
-
-## Docker
-
-```bash
-docker compose up
-```
-
-Recommended for CI, self-hosting, and reproducible environments.
 
 ---
 
@@ -314,7 +351,7 @@ The three CLI providers each run their own real agentic tool-use loop per task (
 # Verify Installation
 
 ```bash
-cressida --help          # run | daemon | dashboard | resolve-escalation | status | learning | ...
+cressida --help          # run | watch | daemon | dashboard | resolve-escalation | status | learning | ...
 ```
 
 Inside Claude Code, opencode, or Codex, call `cressida_status` — expect:
@@ -354,7 +391,8 @@ missions/
     ├── backlog.json
     ├── implementation/
     ├── review_report.md
-    └── execution_state.json
+    ├── execution_state.json
+    └── live_events.jsonl        # live, append-only event log — see `cressida watch`
 ```
 
 Every engineering decision is reproducible from what's on disk.
@@ -366,6 +404,7 @@ Every engineering decision is reproducible from what's on disk.
 | Mode | Purpose |
 |-------|----------|
 | CLI | One-off missions (`cressida run brief.md`) |
+| Watch | Live-tail a running mission's event log (`cressida watch`) — no console window or MCP polling needed |
 | MCP Server | Integrated directly into Claude Code / opencode / Codex |
 | Daemon | Fully autonomous background execution |
 | Dashboard | Real-time mission monitoring |
@@ -496,6 +535,8 @@ cressida/
 ├── agents/            specifications, constitution, prompts
 ├── orchestration/      coordinator, dispatcher, scheduler, executor, dependency_graph
 ├── core/providers/     anthropic, openai, gemini, groq, ollama, claude_cli, opencode, codex
+├── core/retrieval/     extraction, summarization, FAISS store, staleness-routed RAG
+├── core/live_log.py    per-mission JSONL event sink (backs `cressida watch`)
 ├── learning/           reflection, playbooks, skills, rewards, curator
 ├── skills/             auto-invoke skill (Claude Code / Codex)
 ├── memory/  knowledge/  missions/  dashboard/  autonomy/  cli/  docs/  tests/
