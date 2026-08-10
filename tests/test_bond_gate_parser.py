@@ -50,6 +50,44 @@ def test_parse_empty_markdown_yields_no_decision(tmp_path):
     assert record["decision"] != "APPROVED"
 
 
+def test_parse_reject_restating_rubric_does_not_falsely_approve(tmp_path):
+    """Regression: a rejection that restates the approve-rubric inline must not
+    be mis-parsed as an approval (the gate must fail closed)."""
+    p = tmp_path / "bond_approve_plan.md"
+    p.write_text(
+        "The gate requires me to APPROVE only when the acceptance tests are "
+        "specified;\nthey are not.\n\nDecision: REJECTED\n",
+        encoding="utf-8",
+    )
+    record = Coordinator._parse_bond_decision_file(p)
+    assert record["decision"] == "REJECTED"
+
+
+def test_parse_reject_listing_options_does_not_falsely_approve(tmp_path):
+    """Regression: 'Decision options: APPROVE / REJECT / ESCALATE' on one line
+    must not let an earlier verdict word win."""
+    p = tmp_path / "bond_approve_plan.md"
+    p.write_text(
+        "Decision options: APPROVE / REJECT / ESCALATE\n\nMy verdict: REJECTED\n",
+        encoding="utf-8",
+    )
+    record = Coordinator._parse_bond_decision_file(p)
+    assert record["decision"] == "REJECTED"
+
+
+def test_parse_escalate_mentioning_approve_does_not_falsely_approve(tmp_path):
+    """Regression: an escalation that mentions not being able to approve must
+    still surface as ESCALATED, not APPROVED."""
+    p = tmp_path / "bond_approve_plan.md"
+    p.write_text(
+        "Verdict: I am not able to approve this without human input.\n\n"
+        "Decision: ESCALATED\n",
+        encoding="utf-8",
+    )
+    record = Coordinator._parse_bond_decision_file(p)
+    assert record["decision"] == "ESCALATED"
+
+
 # ── _check_bond_gate: JSON-over-mtime preference ────────────────────────────
 
 class _FakeState:

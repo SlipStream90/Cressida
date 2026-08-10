@@ -114,7 +114,7 @@ class Coordinator:
                         )
                         return state
 
-            self._finalize_mission(state)
+            await self._finalize_mission(state)
 
         except CyclicDependencyError as e:
             state.status = MissionStatus.FAILED
@@ -223,20 +223,59 @@ class Coordinator:
                 "approved_mcp_tools": record.get("approved_mcp_tools") or [],
             }
 
-        # Markdown fallback: look for "Decision:"/"Verdict:"/"gate":  <verdict>
-        # (BOND has been observed writing all three labels, and using the
-        # unsuffixed "APPROVE"/"REJECT" as well as "APPROVED"/"REJECTED"), then
-        # for an embedded ```json ... approved_mcp_tools ... ``` fence if BOND
-        # included one.
-        # Non-greedy `[^\n]*?` (not just `[:\s]*`) so phrasing like "Decision
-        # recorded: **APPROVED**" still matches — a real BOND output that the
-        # stricter pattern missed, silently parsing as decision="" and
-        # falsely blocking an approved mission (see mission_20260810_073356).
-        m = _re.search(
-            r"(?:decision|verdict|gate)[^\n]*?[:\s]*\**\s*(APPROVE(?:D)?|REJECT(?:ED)?|ESCALATE(?:D)?)",
-            text, _re.IGNORECASE,
+        # Markdown fallback: look for a "Decision:"/"Verdict:"/"gate": <verdict>"
+        # line. BOND has been observed writing all three labels, and using the
+        # unsuffixed "APPROVE"/"REJECT" as well as "APPROVED"/"REJECTED". The
+        # verdict word must sit on the SAME line as (and right after) the label
+        # — `label … : <verdict>` — which is how BOND actually emits it
+        # ("Decision: REJECTED", "Decision recorded: **APPROVED**",
+        # "My verdict: REJECTED", "**Decision: rejected.**"). This deliberately
+        # does NOT allow a whole sentence of prose between the label and the
+        # verdict word, because then a rejection that *restates the rubric* ("the
+        # gate requires me to APPROVE only when…") or an escalation that mentions
+        # "approve" earlier in its sentence would be taken as the verdict and
+        # falsely unblock the mission (see mission_20260810_073356 and
+        # tests/test_bond_gate_parser.py). A verdict word immediately followed by
+        # more separators (e.g. the "APPROVE" inside "APPROVE / REJECT /
+        # ESCALATE") is excluded so an options list can't be mistaken for the
+        # decision. We scan the lines in order and take the LAST clean label
+        # line's verdict — BOND's actual decision is what it writes last, after
+        # any reasoning.
+        verdict_re = _re.compile(
+            r"(APPROVE(?:D)?|REJECT(?:ED)?|ESCALATE(?:D)?)\b", _re.IGNORECASE
         )
-        decision = m.group(1).upper() if m else ""
+        # A label line may carry leading Markdown emphasis (e.g. "**Decision:
+        # rejected.**"); strip a leading run of `*_~` before the label check.
+        # The verdict must sit within a short window of the label on the same
+        # line — `label … <verdict>` — which is how BOND actually emits it
+        # ("Decision: REJECTED", "Decision recorded: **APPROVED**",
+        # "My verdict: REJECTED", "**Decision: rejected.**"). Bounding the gap is
+        # what keeps a rejection that *restates the rubric* ("the gate requires
+        # me to APPROVE only when…") or an escalation that mentions "approve"
+        # earlier in its sentence from being taken as the verdict and falsely
+        # unblocking the mission (see mission_20260810_073356 and
+        # tests/test_bond_gate_parser.py).
+        label_re = _re.compile(
+            r"(?:decision|verdict|gate)\b[^\n]{0,40}?"
+            r"(APPROVE(?:D)?|REJECT(?:ED)?|ESCALATE(?:D)?)\b",
+            _re.IGNORECASE,
+        )
+        clean: list[str] = []
+        any_match: list[str] = []
+        for raw_line in text.splitlines():
+            line = raw_line.lstrip().lstrip("*_~")
+            m = label_re.search(line)
+            if not m:
+                continue
+            verdict = m.group(1).upper()
+            any_match.append(verdict)
+            # Exclude a verdict immediately continued with separators — that's an
+            # option list, not a decision ("APPROVE / REJECT / ESCALATE").
+            after = line[m.end():].lstrip()[:1]
+            if after and after in "/\\(|":
+                continue
+            clean.append(verdict)
+        decision = clean[-1] if clean else (any_match[-1] if any_match else "")
         decision = {"APPROVE": "APPROVED", "REJECT": "REJECTED", "ESCALATE": "ESCALATED"}.get(decision, decision)
         approved_mcp_tools: list[str] = []
         for fence in _re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", text, _re.DOTALL):
@@ -473,7 +512,7 @@ class Coordinator:
 
         self._persist_state(state)
 
-    def _finalize_mission(self, state: MissionState) -> None:
+    async def _finalize_mission(self, state: MissionState) -> None:
         all_completed = all(
             t.status == TaskStatus.COMPLETED for t in state.tasks.values()
         )
@@ -481,19 +520,15 @@ class Coordinator:
             t.status == TaskStatus.FAILED for t in state.tasks.values()
         )
 
-        if all_completed:
-            state.status = MissionStatus.COMPLETED
-            self._event_bus.publish(
-                Event(type=EventType.MISSION_COMPLETED, data={"mission_id": state.mission_id}, source="coordinator")
-            )
-        elif any_failed:
+        if any_failed:
             state.status = MissionStatus.FAILED
-            self._event_bus.publish(
+            await self._event_bus.publish(
                 Event(type=EventType.MISSION_FAILED, data={"mission_id": state.mission_id, "error": "One or more tasks failed"}, source="coordinator")
             )
         else:
+            # all_completed, or an empty/no-op DAG — both are a completed mission.
             state.status = MissionStatus.COMPLETED
-            self._event_bus.publish(
+            await self._event_bus.publish(
                 Event(type=EventType.MISSION_COMPLETED, data={"mission_id": state.mission_id}, source="coordinator")
             )
 
@@ -553,4 +588,10 @@ class Coordinator:
             "tasks": tasks_data,
             "updated_at": datetime.now().isoformat(),
         }
+        # Surface the BOND block reason so resolve_escalation and a human
+        # reading execution_state.json can see *why* it's ESCALATED, not just
+        # that it is. See orchestration/escalation.py, which clears this key
+        # once the block is resolved.
+        if "bond_gate_blocked" in state.metadata:
+            payload["bond_gate_blocked"] = state.metadata["bond_gate_blocked"]
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")

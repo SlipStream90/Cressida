@@ -31,14 +31,10 @@ Notes / limitations
   For very large prompts, consider using --file to attach a prompt file.
 """
 
-import asyncio
 import json
 import os
-import queue
 import shutil
 import subprocess
-import threading
-import time
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +42,7 @@ from cressida.core import AgentRole, MissionState, Task
 from cressida.core.paths import project_dir
 from cressida.core.events import EventBus
 from cressida.core.providers.base import ProviderAgentBase
+from cressida.core.providers.claude_cli_agent import _terminate_process_tree
 
 
 # Strategic roles get the strongest model; workers get the faster one.
@@ -133,7 +130,10 @@ class OpenCodeAgent(ProviderAgentBase):
         )
         # Working directory is chosen per task (the mission's target project)
         # rather than pinned to the install dir — see _invoke_blocking.
-        self._timeout = timeout
+        # Normalise the "use the provider default" sentinels (0 or None) to
+        # the module's _DEFAULT_TIMEOUT so subprocess.run never receives a 0
+        # (which would time out immediately) or a bare None here.
+        self._timeout = _DEFAULT_TIMEOUT if (timeout is None or timeout == 0) else timeout
 
     async def execute(self, state: MissionState, task: Task, event_bus: EventBus | None = None) -> Any:
         system_prompt = self._load_spec()
@@ -191,18 +191,36 @@ class OpenCodeAgent(ProviderAgentBase):
 
         # Pass prompt via stdin to avoid Windows command line length limits.
         # OpenCode's run command reads from stdin when no message argument is given.
+        # subprocess.run(timeout=...) only kills the direct child on Windows,
+        # orphaning descendant processes to keep running after we've declared
+        # the task dead (same issue fixed for KiloCodeAgent/CodexAgent). Use
+        # Popen + the shared process-tree killer so a timeout actually stops
+        # the whole tree.
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=work_dir,
+        )
         try:
-            proc = subprocess.run(
-                cmd,
-                input=prompt,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=self._timeout,
-                cwd=work_dir,
-            )
+            stdout, stderr = proc.communicate(input=prompt, timeout=self._timeout)
         except subprocess.TimeoutExpired as exc:
+            _terminate_process_tree(proc)
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                pass
+            finally:
+                for _pipe in (proc.stdout, proc.stderr, proc.stdin):
+                    try:
+                        if _pipe is not None:
+                            _pipe.close()
+                    except Exception:
+                        pass
             raise RuntimeError(
                 f"OpenCode CLI timed out after {self._timeout}s for role {self.role.value}."
             ) from exc
@@ -210,10 +228,10 @@ class OpenCodeAgent(ProviderAgentBase):
         if proc.returncode != 0:
             raise RuntimeError(
                 f"OpenCode CLI exited {proc.returncode} for role {self.role.value}.\n"
-                f"stderr: {(proc.stderr or '').strip()[:2000]}"
+                f"stderr: {(stderr or '').strip()[:2000]}"
             )
 
-        return self._parse_output(proc.stdout)
+        return self._parse_output(stdout)
 
     @staticmethod
     def _parse_output(stdout: str) -> tuple[str, list[dict[str, Any]]]:

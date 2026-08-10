@@ -35,6 +35,7 @@ from cressida.core import AgentRole, MissionState, Task
 from cressida.core.paths import cressida_home, project_dir
 from cressida.core.events import EventBus
 from cressida.core.providers.base import ProviderAgentBase
+from cressida.core.providers.claude_cli_agent import _terminate_process_tree
 
 
 _DEFAULT_TIMEOUT = float(os.environ.get("CRESSIDA_CODEX_TIMEOUT", "3600"))
@@ -105,7 +106,10 @@ class CodexAgent(ProviderAgentBase):
             )
 
         self._model = model or os.environ.get("CRESSIDA_CODEX_MODEL") or ""
-        self._timeout = timeout
+        # Normalise the "use the provider default" sentinels (0 or None) to
+        # the module's _DEFAULT_TIMEOUT so subprocess.run never receives a 0
+        # (which would time out immediately) or a bare None here.
+        self._timeout = _DEFAULT_TIMEOUT if (timeout is None or timeout == 0) else timeout
 
     async def execute(self, state: MissionState, task: Task, event_bus: EventBus | None = None) -> Any:
         system_prompt = self._load_spec()
@@ -140,33 +144,64 @@ class CodexAgent(ProviderAgentBase):
             "-C", work_dir,
             "-s", "workspace-write",
             "--skip-git-repo-check",
+            # Research-capable Codex calls need network access for their model
+            # transport and current-source lookups; keep writes in the normal
+            # workspace-write sandbox instead of bypassing the sandbox.
+            "-c", "sandbox_workspace_write.network_access=true",
             "-o", out_path,
         ]
         if work_dir != home:
             cmd.extend(["--add-dir", home])
+        # Codex persists its auth/session state under CODEX_HOME (normally
+        # ~/.codex). The mission subprocess has its own workspace sandbox, so
+        # granting only the project and Cressida home makes state_*.sqlite
+        # appear read-only and Codex exits before answering. Grant the active
+        # Codex home explicitly so nested Cressida missions can use the same
+        # authenticated Codex installation as the parent process.
+        codex_home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))).expanduser().resolve()
+        if str(codex_home) not in {work_dir, home}:
+            cmd.extend(["--add-dir", str(codex_home)])
         if self._model:
             cmd.extend(["-m", self._model])
         cmd.append("-")  # force stdin read for the prompt
 
+        # subprocess.run(timeout=...) only kills the direct child on Windows,
+        # orphaning `codex`'s own descendant processes to keep writing into
+        # the mission's project dir after we've declared the task dead (same
+        # issue fixed for KiloCodeAgent). Use Popen + the shared process-tree
+        # killer so a timeout actually stops the whole tree.
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=work_dir,
+        )
         try:
-            proc = subprocess.run(
-                cmd,
-                input=prompt,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=self._timeout,
-                cwd=work_dir,
-            )
+            stdout, stderr = proc.communicate(input=prompt, timeout=self._timeout)
             if proc.returncode != 0:
                 raise RuntimeError(
                     f"Codex CLI exited {proc.returncode} for role {self.role.value}.\n"
-                    f"stderr: {(proc.stderr or '').strip()[:2000]}"
+                    f"stderr: {(stderr or '').strip()[:2000]}"
                 )
             out_file = Path(out_path)
-            return out_file.read_text(encoding="utf-8").strip() if out_file.exists() else proc.stdout.strip()
+            return out_file.read_text(encoding="utf-8").strip() if out_file.exists() else stdout.strip()
         except subprocess.TimeoutExpired as exc:
+            _terminate_process_tree(proc)
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                pass
+            finally:
+                for _pipe in (proc.stdout, proc.stderr, proc.stdin):
+                    try:
+                        if _pipe is not None:
+                            _pipe.close()
+                    except Exception:
+                        pass
             raise RuntimeError(
                 f"Codex CLI timed out after {self._timeout}s for role {self.role.value}."
             ) from exc

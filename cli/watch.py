@@ -102,16 +102,16 @@ def _read_new_records(path: Path, offset: int) -> tuple[int, list[dict[str, Any]
     return offset + consumed, records
 
 
-def follow_mission_events(mission_id: str, poll_interval: float = 0.75, wait_timeout: float = 30.0):
-    """Generator yielding parsed event dicts as they're appended to
-    ``missions/<mission_id>/live_events.jsonl``, forever.
+def _wait_for_event_file(mission_id: str, poll_interval: float, wait_timeout: float) -> Path:
+    """Block until ``missions/<id>/live_events.jsonl`` exists, or raise
+    ``FileNotFoundError`` after ``wait_timeout`` seconds.
 
-    Yields ``None`` on poll cycles with no new data — that's the heartbeat
-    tick a caller uses to refresh an "Ns since last event" display even when
-    nothing happened. Waits (rather than raising immediately) if the file
-    doesn't exist yet, since a mission that just started may not have had its
-    sink write the first event; raises ``FileNotFoundError`` only after
-    ``wait_timeout`` seconds of the file never appearing.
+    This exists so the "mission never started" error is raised *eagerly*, at the
+    point ``watch_mission`` can actually catch it — ``follow_mission_events`` is a
+    generator, and the wait loop inside it only runs once the generator is first
+    iterated (inside the ``for`` loop), by which point the surrounding
+    ``except FileNotFoundError`` is no longer in scope. Doing the wait here, before
+    the generator is constructed, keeps that handler reachable.
     """
     path = mission_dir(mission_id) / "live_events.jsonl"
     waited = 0.0
@@ -123,6 +123,22 @@ def follow_mission_events(mission_id: str, poll_interval: float = 0.75, wait_tim
             )
         time.sleep(poll_interval)
         waited += poll_interval
+    return path
+
+
+def follow_mission_events(mission_id: str, poll_interval: float = 0.75, wait_timeout: float = 30.0):
+    """Generator yielding parsed event dicts as they're appended to
+    ``missions/<mission_id>/live_events.jsonl``, forever.
+
+    Yields ``None`` on poll cycles with no new data — that's the heartbeat
+    tick a caller uses to refresh an "Ns since last event" display even when
+    nothing happened. The wait for the file to appear (and the
+    ``FileNotFoundError`` once ``wait_timeout`` elapses) is handled eagerly by
+    ``_wait_for_event_file`` so the caller's ``except FileNotFoundError`` stays
+    reachable — a mission that just started may not have had its sink write the
+    first event yet, so the await isn't skipped, just bounded.
+    """
+    path = _wait_for_event_file(mission_id, poll_interval, wait_timeout)
 
     offset = 0
     while True:

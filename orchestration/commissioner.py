@@ -30,6 +30,27 @@ from cressida.core import AgentRole, MissionState, Task
 from cressida.core.registry import AgentRegistry
 
 _JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
+_SMALL_HINTS = ("small", "tiny", "script", "cli", "command-line", "utility")
+_COMPLEX_HINTS = (
+    "database", "api service", "authentication", "deployment", "deploy",
+    "multi-component", "microservice", "external service", "hosted",
+)
+
+
+def _obviously_trivial(brief: str) -> bool:
+    """Avoid an expensive model round-trip for unambiguously tiny local work.
+
+    The commissioner runs before the mission DAG exists, so a slow CLI model
+    would otherwise make the mission appear stuck with no execution state.
+    Ambiguous or complex briefs still go through the model classifier.
+    """
+    text = brief.casefold()
+    return (
+        len(text) <= 1200
+        and any(hint in text for hint in _SMALL_HINTS)
+        and not any(hint in text for hint in _COMPLEX_HINTS)
+    )
+
 
 _PROMPT = (
     "Classify this mission brief for pipeline sizing. Respond with ONLY a JSON "
@@ -48,6 +69,10 @@ _PROMPT = (
 async def is_trivial_mission(mission_id: str, brief: str, registry: AgentRegistry) -> bool:
     """Ask M to classify mission complexity. Returns False (full pipeline) if M
     isn't registered, times out, or returns anything that doesn't parse."""
+    if _obviously_trivial(brief):
+        print(f"[commissioner] mission {mission_id} classified trivial=True: obvious small local utility")
+        return True
+
     m_agent = registry.get(AgentRole.M)
     if m_agent is None:
         return False

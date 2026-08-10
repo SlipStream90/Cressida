@@ -89,6 +89,10 @@ from cressida.core import AgentRole, MissionState, Task
 from cressida.core.paths import project_dir
 from cressida.core.events import EventBus
 from cressida.core.providers.base import ProviderAgentBase
+# Reuse the proven, platform-correct process-tree kill (kills the whole
+# cmd.exe -> node.exe chain, not just the direct child) so a timed-out
+# `kilo run` cannot leave an orphaned agent still editing the project.
+from cressida.core.providers.claude_cli_agent import _terminate_process_tree
 
 
 # How long (seconds) to wait on a single CLI completion before giving up.
@@ -172,7 +176,10 @@ class KiloCodeAgent(ProviderAgentBase):
 
         # Explicit model > env override > let Kilo pick its own default.
         self._model = model or os.environ.get("CRESSIDA_KILOCODE_MODEL") or ""
-        self._timeout = timeout
+        # Normalise the "use the provider default" sentinels (0 or None) to
+        # the module's _DEFAULT_TIMEOUT so subprocess.run never receives a 0
+        # (which would time out immediately) or a bare None here.
+        self._timeout = _DEFAULT_TIMEOUT if (timeout is None or timeout == 0) else timeout
 
     async def execute(self, state: MissionState, task: Task, event_bus: EventBus | None = None) -> Any:
         system_prompt = self._load_spec()
@@ -225,18 +232,38 @@ class KiloCodeAgent(ProviderAgentBase):
 
         # Prompt goes over stdin (no message positional) — avoids Windows
         # command-line length limits, same as CodexAgent/OpenCodeAgent.
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=work_dir,
+        )
         try:
-            proc = subprocess.run(
-                cmd,
-                input=prompt,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=self._timeout,
-                cwd=work_dir,
-            )
+            stdout, stderr = proc.communicate(input=prompt, timeout=self._timeout)
+            result = subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
         except subprocess.TimeoutExpired as exc:
+            # `kilo` installs on Windows as `kilo.cmd` (cmd.exe -> node.exe).
+            # `subprocess.run` only kills the direct child (cmd.exe) on timeout,
+            # orphaning the real agent process — still holding --auto and writing
+            # into the mission's project dir after we've declared the task dead.
+            # Kill the whole tree and reap it so its stdout pipe closes and the
+            # handles are released before we raise.
+            try:
+                _terminate_process_tree(proc)
+                proc.wait(timeout=5)
+            except Exception:
+                pass
+            finally:
+                for _pipe in (proc.stdout, proc.stderr, proc.stdin):
+                    try:
+                        if _pipe is not None:
+                            _pipe.close()
+                    except Exception:
+                        pass
             raise RuntimeError(
                 f"Kilo Code CLI timed out after {self._timeout}s for role {self.role.value}."
             ) from exc

@@ -118,6 +118,34 @@ def _list_escalations(mission_id: str) -> list[str]:
     return [f.name for f in esc_dir.iterdir() if f.suffix == ".json" and f.stem != "resolution"]
 
 
+# A mission started via run_mission runs as its own OS subprocess (see
+# _spawn_mission_background), with its own EventBus — StallMonitor's
+# in-memory bus in *this* process never sees that subprocess's TASK_STARTED
+# events, so it can never flag a stalled mission launched the normal way.
+# Everything a mission does IS visible on disk though: execution_state.json
+# (written immediately on start, then after every batch) and
+# live_events.jsonl (appended per event) are both cross-process-readable.
+# Their newest mtime is "when did this mission last visibly do anything" —
+# a simple, working substitute for the in-memory approach that also covers
+# a mission stuck before its first TASK_STARTED (nothing here depends on
+# that event existing at all).
+_STALL_SECONDS = 1800.0  # matches autonomy/monitor.py's default threshold
+
+
+def _mission_staleness_seconds(mission_id: str) -> float | None:
+    mpath = _mission_path(mission_id)
+    mtimes = []
+    for name in ("execution_state.json", "live_events.jsonl"):
+        f = mpath / name
+        if f.exists():
+            mtimes.append(f.stat().st_mtime)
+    if not mtimes and mpath.exists():
+        mtimes.append(mpath.stat().st_mtime)  # mission dir just created, nothing written into it yet
+    if not mtimes:
+        return None
+    return datetime.now().timestamp() - max(mtimes)
+
+
 # ── Tools ─────────────────────────────────────────────────────────────────────
 
 # Track running missions — either a subprocess.Popen (hidden background
@@ -201,6 +229,7 @@ async def run_mission(
     priority: str = "medium",
     project_dir: str = "",
     show_window: bool = False,
+    mission_id: str = "",
 ) -> str:
     """Start a new Cressida mission from a plain-English brief.
 
@@ -234,6 +263,11 @@ async def run_mission(
                       watch` / mission_status polling — not instead of them.
                       Default False: the mission runs hidden, and `cressida
                       watch` is the main way to see it live.
+        mission_id:   Pass an existing mission ID to RESUME it instead of
+                      starting fresh — e.g. after resolve_escalation unblocks
+                      a BOND-rejected mission, or after a crash. Tasks already
+                      COMPLETED are skipped; the rest (including a reset BOND
+                      gate task) re-run. Leave empty to start a new mission.
 
     Returns:
         Mission ID and status message.
@@ -242,7 +276,13 @@ async def run_mission(
 
     _ensure_monitor_started()
 
-    mission_id = f"mission_{_dt.now().strftime('%Y%m%d_%H%M%S')}"
+    resuming = bool(mission_id)
+    if not mission_id:
+        # Microsecond suffix avoids collisions between missions started in
+        # the same wall-clock second (second-resolution timestamps alone
+        # let two rapid run_mission calls land on the same mission_id and
+        # silently share/overwrite one mission directory).
+        mission_id = f"mission_{_dt.now().strftime('%Y%m%d_%H%M%S_%f')}"
 
     # Resolve a path-form brief to its actual content *here*, before it is ever
     # persisted. cli/commands.py:run_mission also resolves a path -- but it
@@ -436,12 +476,19 @@ def mission_status(mission_id: str) -> str:
 
         # Mission exists but no execution_state.json yet — report what we have
         files = [str(f.relative_to(mpath)) for f in mpath.rglob("*") if f.is_file()]
+        staleness = _mission_staleness_seconds(mission_id)
+        stalled = staleness is not None and staleness >= _STALL_SECONDS
         return json.dumps({
             "mission_id": mission_id,
             "status": "initializing",
             "message": "Mission is starting up. execution_state.json not yet created.",
             "files_found": len(files),
             "sample_files": files[:10],
+            "stalled": stalled,
+            "stall_note": (
+                f"No activity for {staleness:.0f}s — likely stuck before its first task "
+                f"started (e.g. classification or process launch never completed)."
+            ) if stalled else None,
         }, indent=2)
 
     tasks = state.get("tasks", {})
@@ -460,6 +507,18 @@ def mission_status(mission_id: str) -> str:
     }
     if state.get("error"):
         result["error"] = state["error"]
+    if state.get("bond_gate_blocked"):
+        result["bond_gate_blocked"] = state["bond_gate_blocked"]
+
+    # Terminal states aren't "stalled", they're just done (or blocked pending
+    # a human, which pending_escalations/bond_gate_blocked above already
+    # surfaces) — only flag staleness while still nominally running.
+    if result["status"] not in ("completed", "COMPLETED", "failed", "FAILED", "ESCALATED"):
+        staleness = _mission_staleness_seconds(mission_id)
+        if staleness is not None and staleness >= _STALL_SECONDS:
+            result["stalled"] = True
+            result["stall_seconds"] = round(staleness)
+
     return json.dumps(result, indent=2)
 
 
@@ -484,11 +543,16 @@ def list_missions() -> str:
             else "running" if any(s in ("in_progress", "pending") for s in statuses)
             else "unknown"
         )
+        stalled = False
+        if overall == "running":
+            staleness = _mission_staleness_seconds(d.name)
+            stalled = staleness is not None and staleness >= _STALL_SECONDS
         missions.append({
             "id": d.name,
             "status": overall,
             "task_count": len(tasks),
             "escalations": _list_escalations(d.name),
+            "stalled": stalled,
         })
     return json.dumps(missions, indent=2)
 
@@ -555,26 +619,19 @@ def resolve_escalation(mission_id: str, decision: str) -> str:
     Returns:
         Confirmation that the resolution was written.
     """
-    esc_dir = _mission_path(mission_id) / "escalations"
-    if not esc_dir.exists():
-        return f"No escalations directory found for mission {mission_id!r}."
+    from cressida.orchestration.escalation import resolve_mission_escalation
 
-    pending = [f for f in esc_dir.iterdir() if f.suffix == ".json" and f.stem != "resolution"]
-    if not pending:
-        return f"No pending escalations for mission {mission_id!r}."
+    if not (_mission_path(mission_id) / "execution_state.json").exists() and not (_mission_path(mission_id) / "escalations").exists():
+        return f"No mission state or escalations found for mission {mission_id!r}."
 
-    resolution = {
-        "resolved_at": datetime.utcnow().isoformat() + "Z",
-        "decision": decision,
-        "resolved_escalations": [f.name for f in pending],
-    }
-    resolution_path = esc_dir / "resolution.json"
-    resolution_path.write_text(json.dumps(resolution, indent=2), encoding="utf-8")
+    result = resolve_mission_escalation(mission_id, decision, resolved_by="MCP resolve_escalation")
 
     return (
         f"Resolution written for mission {mission_id}.\n"
-        f"Resolved {len(pending)} escalation(s): {[f.name for f in pending]}\n"
-        f"Restart the mission with: cressida run (it will pick up from the last checkpoint)"
+        f"Resolved {len(result['escalations_resolved'])} escalation(s): {result['escalations_resolved']}\n"
+        f"BOND task reset for re-run: {result['bond_task_reset']}\n"
+        f"Restart the mission with run_mission using the same mission_id "
+        f"(it will pick up from the last checkpoint)"
     )
 
 

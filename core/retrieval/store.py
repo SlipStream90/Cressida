@@ -22,9 +22,10 @@ to swap for a real embedding model later — the FAISS index format
 (IndexIDMap2 over IndexFlatIP, fixed `dim`) and every caller are unaffected
 since nobody but this module touches raw vectors.
 
-Storage layout (under `base_path`; default mirrors learning/playbook.py's
-`knowledge/<subdir>` convention, relative to the process's working directory
-just like PlaybookStore's own default — see that module for precedent):
+Storage layout (under `base_path`; default resolves to
+``cressida_home() / "knowledge/retrieval"`` via ``_default_store_path``, so it
+is independent of the process working directory — see that function's note about
+why a bare relative default would break the write-back cache):
     index.faiss   — the FAISS IndexIDMap2(IndexFlatIP) index
     meta.sqlite3  — text/source/tags/topic/timestamp per doc, keyed by the
                     same int id used in the FAISS index
@@ -47,7 +48,24 @@ import faiss
 
 
 DEFAULT_DIM = 256
+_DEFAULT_STORE_REL = "knowledge/retrieval"
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+def _default_store_path() -> Path:
+    """Resolve the RAG store's base directory through the package's canonical
+    path logic (core/paths.cressida_home) instead of a bare relative path.
+
+    A relative default would be resolved against the process working directory,
+    so the FAISS index + SQLite sidecar would land in whatever folder Cressida
+    happened to be launched from — and, worse, a *different* folder each time
+    (the user's project, the CWD, …), which silently defeats the whole point of
+    the write-back cache ("the next call on this topic is a RAG hit"). Every
+    other stateful path in the package goes through core/paths, so this does too.
+    """
+    from cressida.core.paths import cressida_home
+
+    return cressida_home() / _DEFAULT_STORE_REL
 
 
 def embed_text(text: str, dim: int = DEFAULT_DIM) -> np.ndarray:
@@ -77,8 +95,8 @@ def embed_text(text: str, dim: int = DEFAULT_DIM) -> np.ndarray:
 class RetrievalStore:
     """Local FAISS index + SQLite metadata sidecar."""
 
-    def __init__(self, base_path: str | Path = "knowledge/retrieval", dim: int = DEFAULT_DIM) -> None:
-        self._base = Path(base_path)
+    def __init__(self, base_path: str | Path | None = None, dim: int = DEFAULT_DIM) -> None:
+        self._base = Path(base_path) if base_path is not None else _default_store_path()
         self._base.mkdir(parents=True, exist_ok=True)
         self._dim = dim
         self._index_path = self._base / "index.faiss"

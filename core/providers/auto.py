@@ -238,7 +238,7 @@ def create_agent(
             agents_dir=agents_dir,
             cressida_root=cressida_root,
             max_tokens=max_tokens,
-            timeout=timeout if timeout > 0 else None,
+            timeout=timeout,
         )
 
     if provider == PROVIDER_OPENCODE:
@@ -248,7 +248,7 @@ def create_agent(
             agents_dir=agents_dir,
             cressida_root=cressida_root,
             max_tokens=max_tokens,
-            timeout=timeout if timeout > 0 else None,
+            timeout=timeout,
         )
 
     if provider == PROVIDER_CODEX:
@@ -258,7 +258,7 @@ def create_agent(
             agents_dir=agents_dir,
             cressida_root=cressida_root,
             max_tokens=max_tokens,
-            timeout=timeout if timeout > 0 else None,
+            timeout=timeout,
         )
 
     if provider == PROVIDER_KILOCODE:
@@ -268,7 +268,7 @@ def create_agent(
             agents_dir=agents_dir,
             cressida_root=cressida_root,
             max_tokens=max_tokens,
-            timeout=timeout if timeout > 0 else None,
+            timeout=timeout,
         )
 
     raise ValueError(f"Unknown provider: {provider!r}")

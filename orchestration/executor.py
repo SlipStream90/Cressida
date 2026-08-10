@@ -200,9 +200,12 @@ class TaskExecutor:
                     ))
 
     def _persist_state(self, mission_id: str, task_status: dict[str, str]) -> None:
-        # Use absolute path based on this file's location to avoid CWD issues
-        cressida_root = Path(__file__).parent.parent.parent
-        path = cressida_root / "missions" / mission_id / "execution_state.json"
+        # Canonical mission dir — see core/paths.py. The previous
+        # `Path(__file__).parent.parent.parent` climbed one level above the repo
+        # root and wrote missions outside it, splitting them from agent output
+        # (and from the Coordinator-written execution_state.json that resume /
+        # mission_status read). Use the shared path so all writers agree.
+        path = mission_dir(mission_id) / "execution_state.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         # Build tasks dict in the format mission_status expects
         tasks_data = {}

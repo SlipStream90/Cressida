@@ -82,6 +82,22 @@ class ProviderAgentBase(Agent):
             out_dir.mkdir(parents=True, exist_ok=True)
             (out_dir / f"{task.id}.md").write_text(content, encoding="utf-8")
             return
+
+        # CLI-backed providers (claude_cli, opencode, codex, kilocode) have
+        # real Write/Edit tools and are instructed to author these files
+        # themselves during the task -- `content` here is just their closing
+        # chat message. Unconditionally overwriting `writes` targets with
+        # that message was clobbering real documents the agent had already
+        # written moments earlier (see missions/mission_20260810_224212:
+        # intelligence/PRD.md ended up as a 6-line "verified the artifacts"
+        # note while the real 60-line PRD sat one level up, at the mission
+        # root -- exactly the path a downstream task's `reads` never looks).
+        # `_reconcile_file_write` only falls back to writing `content` when
+        # there's no evidence a tool already produced the real file; for
+        # providers that only return text (no file-write tools at all), that
+        # fallback is what has always persisted their output, unchanged.
+        cutoff = (task.started_at.timestamp() - 2.0) if task.started_at else None
+
         for write_path in writes:
             resolved = write_path.replace("<mission_id>", mission_id)
             # Anchored to cressida_home(), not the CWD. Resolving against the CWD
@@ -90,12 +106,38 @@ class ProviderAgentBase(Agent):
             # could find. Absolute paths still pass through, which is how a
             # mission writes into an external target project.
             p = resolve_under_home(resolved)
-            if p.suffix:
-                p.parent.mkdir(parents=True, exist_ok=True)
-                p.write_text(content, encoding="utf-8")
-            else:
-                p.mkdir(parents=True, exist_ok=True)
-                (p / f"{task.id}.md").write_text(content, encoding="utf-8")
+            target = p if p.suffix else (p / f"{task.id}.md")
+            self._reconcile_file_write(mission_id, target, content, cutoff)
+
+    def _reconcile_file_write(
+        self, mission_id: str, target: Path, content: str, cutoff: float | None,
+    ) -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        if cutoff is None:
+            target.write_text(content, encoding="utf-8")
+            return
+
+        if target.exists() and target.stat().st_mtime >= cutoff:
+            # The agent's own tools already wrote real content here during
+            # this task run -- don't clobber it with the closing chat text.
+            return
+
+        # Same basename, different (wrong) location, written during this
+        # task run: relocate it rather than losing it under a stub.
+        for candidate in mission_dir(mission_id).rglob(target.name):
+            if candidate == target:
+                continue
+            try:
+                if candidate.stat().st_mtime >= cutoff:
+                    target.write_text(candidate.read_text(encoding="utf-8"), encoding="utf-8")
+                    return
+            except OSError:
+                continue
+
+        # Nothing found -- the agent narrated instead of using a tool (or
+        # this provider has no file-write tools at all). Persist the text.
+        target.write_text(content, encoding="utf-8")
 
     async def get_capabilities(self) -> list[str]:
         from cressida.orchestration.router import TASK_TYPE_ROUTE

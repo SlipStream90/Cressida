@@ -314,6 +314,27 @@ def _build_mission_state(
     return state
 
 
+def _persist_initial_state(state: MissionState) -> None:
+    """Make a fresh mission visible before its first agent batch returns."""
+    path = mission_dir(state.mission_id) / "execution_state.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tasks = {
+        task_id: {
+            "status": task.status.value if hasattr(task.status, "value") else str(task.status),
+            "agent": task.agent.value if task.agent else None,
+            "name": task.name,
+            "error": None,
+        }
+        for task_id, task in state.tasks.items()
+    }
+    path.write_text(json.dumps({
+        "mission_id": state.mission_id,
+        "status": MissionStatus.PENDING.value,
+        "tasks": tasks,
+        "updated_at": datetime.now().isoformat(),
+    }, indent=2), encoding="utf-8")
+
+
 def _rehydrate_from_execution_state(state: MissionState, mission_id: str) -> bool:
     """If ``missions/<id>/execution_state.json`` already exists, overlay its
     per-task COMPLETED/FAILED statuses onto the freshly-built (all-PENDING)
@@ -373,7 +394,9 @@ async def run_mission(args: argparse.Namespace) -> int:
     else:
         brief = args.brief
 
-    mission_id = getattr(args, "mission_id", None) or f"mission_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    # Microsecond suffix avoids two missions started in the same wall-clock
+    # second colliding on mission_id (and thus on missions/<id>/).
+    mission_id = getattr(args, "mission_id", None) or f"mission_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
 
     event_bus = EventBus()
     _wire_vault_sync(event_bus)
@@ -395,6 +418,7 @@ async def run_mission(args: argparse.Namespace) -> int:
         mission_id, brief, target_dir=getattr(args, "project_dir", None), trivial=trivial,
     )
     _rehydrate_from_execution_state(state, mission_id)
+    _persist_initial_state(state)
 
     coordinator = Coordinator(registry, event_bus, memory)
     shared = SharedState()
@@ -522,24 +546,15 @@ async def export_rewards(args: argparse.Namespace) -> int:
 
 
 async def resolve_escalation(args: argparse.Namespace) -> int:
-    """Resolve a BOND escalation and unblock a mission.
+    """Resolve a BOND escalation and unblock a mission for resume."""
+    from cressida.orchestration.escalation import resolve_mission_escalation
 
-    Writes missions/<mission_id>/escalations/resolution.json which
-    BOND checks before proceeding.
-    """
-    import json as _json
     mission_id = args.mission_id
     action = args.action
-    resolution = {
-        "resolved": True,
-        "action": action,
-        "resolved_at": datetime.now().isoformat(),
-        "resolved_by": "CRESSIDA COMMAND",
-    }
-    path = mission_dir(mission_id) / "escalations" / "resolution.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_json.dumps(resolution, indent=2), encoding="utf-8")
+    result = resolve_mission_escalation(mission_id, action, resolved_by="CRESSIDA COMMAND")
     print(f"Escalation resolved for mission {mission_id}.")
     print(f"  Action: {action}")
-    print(f"  Resolution written to: {path}")
+    print(f"  Escalation records cleared: {result['escalations_resolved'] or '(none pending)'}")
+    print(f"  BOND task reset for re-run: {result['bond_task_reset']}")
+    print(f"  Resume with: cressida run --mission-id {mission_id} ...")
     return 0

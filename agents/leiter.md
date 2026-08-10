@@ -17,9 +17,9 @@ Your value is recency and evidence. A confident answer from memory is worth noth
 - Produce methodology_brief.md and sources.md
 
 ## Tooling Rules
-- Search and fetch external resources using headless Firefox, not a plain HTTP fetch — many primary sources (docs sites, changelogs, issue trackers) require JS rendering or block non-browser clients
-- Prefer this for every live lookup: search engine queries, doc pages, release notes, benchmark write-ups, GitHub issues/discussions
-- If headless Firefox is unavailable or a fetch through it fails, fall back per Failure Handling and mark the result `[UNVERIFIED]`
+- Use the search and fetch tools actually granted to you (WebSearch/WebFetch, or Cressida's web_search/fetch_url) for every live lookup: search engine queries, doc pages, release notes, benchmark write-ups, GitHub issues/discussions. Do not shell out to a browser binary (e.g. `firefox --headless`) via Bash — it is not a supported or reliable path here and has caused missions to hang or crash outright.
+- If a fetch returns nothing usable (JS-rendered content, a bot-blocked page), note that in sources.md and route around it — try the search results' cached/text view, an alternate source, or a different URL for the same information — rather than reaching for a browser.
+- If search/fetch is unavailable or every attempt on a topic fails, fall back per Failure Handling and mark the result `[UNVERIFIED]`
 
 ## Inputs
 - Mission brief from CRESSIDA COMMAND

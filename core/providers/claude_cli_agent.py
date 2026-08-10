@@ -54,6 +54,8 @@ import logging
 import os
 import queue
 import shutil
+import signal
+import sys
 import subprocess
 import tempfile
 import threading
@@ -186,6 +188,205 @@ def filter_dynamic_tools(candidates: list[str]) -> tuple[list[str], list[tuple[s
     return safe, rejected
 
 
+def _descendant_pids(root_pid: int) -> list[int]:
+    """Return PIDs in the process tree rooted at ``root_pid`` on Windows."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        class _ProcessEntry32W(ctypes.Structure):
+            _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
+                        ("th32ProcessID", wintypes.DWORD), ("th32DefaultHeapID", ctypes.c_void_p),
+                        ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+                        ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", wintypes.LONG),
+                        ("dwFlags", wintypes.DWORD), ("szExeFile", wintypes.WCHAR * 260)]
+        k32=ctypes.windll.kernel32
+        k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        k32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(_ProcessEntry32W)]
+        k32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(_ProcessEntry32W)]
+        snap=k32.CreateToolhelp32Snapshot(0x2, 0)
+        if snap == ctypes.c_void_p(-1).value:
+            raise OSError
+        rows=[]
+        try:
+            e=_ProcessEntry32W(); e.dwSize=ctypes.sizeof(e)
+            if k32.Process32FirstW(snap, ctypes.byref(e)):
+                while True:
+                    rows.append((int(e.th32ParentProcessID), int(e.th32ProcessID)))
+                    if not k32.Process32NextW(snap, ctypes.byref(e)):
+                        break
+        finally:
+            k32.CloseHandle(snap)
+    except Exception:
+        try:
+            out=subprocess.run(["wmic","process","get","processid,parentprocessid"], capture_output=True, text=True, timeout=10).stdout
+            rows=[]
+            for line in out.splitlines()[1:]:
+                parts=line.split()
+                if len(parts)>=2 and parts[-1].isdigit() and parts[-2].isdigit():
+                    rows.append((int(parts[-2]), int(parts[-1])))
+        except Exception:
+            return []
+    children: dict[int, list[int]] = {}
+    for ppid, pid in rows:
+        children.setdefault(ppid, []).append(pid)
+    found=[]; stack=[root_pid]
+    while stack:
+        cur=stack.pop(); found.append(cur); stack.extend(children.get(cur, []))
+    return found
+
+
+def _open_process_handle(pid: int, access: int):
+    """Open a handle to ``pid`` with the given access rights, or None. Windows
+    only — uses the kernel32 API directly so we can both terminate and wait on
+    the exact (possibly reparented) process."""
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+        return kernel32.OpenProcess(access, False, pid)
+    except Exception:
+        return None
+
+
+def _pid_alive(pid: int) -> bool:
+    """Deterministic check of whether a PID is still running (Windows). Opens a
+    handle and asks for its exit code: a still-running process returns
+    STILL_ACTIVE (259), an exited one returns its exit code (or fails to open).
+    This avoids the async/race of polling `wmic`."""
+    import ctypes
+    kernel32 = ctypes.windll.kernel32
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    handle = _open_process_handle(pid, PROCESS_QUERY_LIMITED_INFORMATION)
+    if not handle:
+        return False
+    try:
+        exit_code = ctypes.c_ulong()
+        if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            return exit_code.value == 259  # STILL_ACTIVE
+        return False
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _hard_kill_pid(pid: int) -> None:
+    """Force-terminate a PID via the Windows API. More reliable than `taskkill`
+    here because it does not race with the OS reparenting a grandchild off the
+    original tree the moment its direct parent (cmd.exe) exits — we hold a
+    handle to the exact PID and call TerminateProcess on it. TerminateProcess is
+    asynchronous: the process is only actually gone once it has run down, which
+    is why callers must wait on the handle (see _terminate_process_tree)."""
+    PROCESS_TERMINATE = 0x0001
+    handle = _open_process_handle(pid, PROCESS_TERMINATE)
+    if handle:
+        try:
+            import ctypes
+            k32 = ctypes.windll.kernel32
+            k32.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+            k32.TerminateProcess.restype = ctypes.c_int
+            k32.TerminateProcess(handle, 1)
+        finally:
+            ctypes.windll.kernel32.CloseHandle(handle)
+    else:
+        # Fall back to taskkill if we couldn't open a handle (e.g. already gone).
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/PID", str(pid)],
+                capture_output=True, text=True, timeout=5,
+            )
+        except Exception:
+            pass
+
+
+def _wait_pid_gone(pid: int, timeout: float) -> bool:
+    """Block until PID ``pid`` has actually exited (TerminateProcess completed),
+    or ``timeout`` seconds elapse. Uses WaitForSingleObject on the process
+    handle so we don't return while the OS is still tearing the process down —
+    that teardown is exactly what closes the orphan's still-open stdout pipe and
+    unblocks the reader threads waiting on it."""
+    import ctypes
+    kernel32 = ctypes.windll.kernel32
+    kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+    kernel32.WaitForSingleObject.restype = ctypes.c_uint32
+    SYNCHRONIZE = 0x00100000
+    handle = _open_process_handle(pid, SYNCHRONIZE)
+    if not handle:
+        return True  # can't open -> treat as gone
+    try:
+        rc = kernel32.WaitForSingleObject(handle, int(timeout * 1000))
+        return rc == 0  # WAIT_OBJECT_0 -> signalled (exited)
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _terminate_process_tree(proc: "subprocess.Popen[bytes]") -> None:
+    """Kill ``proc`` and, on platforms where a single ``proc.kill()`` only
+    terminates the direct child while its descendants keep running, the whole
+    tree beneath it — and wait until it is actually gone.
+
+    The `claude`/`opencode`/`codex`/`kilo` CLIs install on Windows as a thin
+    ``*.cmd`` shim (``cmd.exe`` -> ``node.exe``/the real binary). A bare
+    ``proc.kill()`` kills ``cmd.exe`` but leaves the actual agent process
+    orphaned — still holding ``--permission-mode acceptEdits`` + Bash, still
+    writing into the mission's project dir, after Cressida has already declared
+    the task dead. So on Windows we escalate to ``taskkill /T /F`` (tree kill),
+    which removes the whole chain; on POSIX we kill the process group instead of
+    just the PID for the same reason (shell wrappers, ``|`` pipelines).
+
+    ``taskkill /F`` is asynchronous — it returns before the targeted processes
+    have necessarily exited — so after issuing the kill we wait (polling
+    ``proc.poll()`` and, on Windows, re-issuing the tree kill against any
+    survivors) until ``proc`` reports as dead or a short budget elapses. Without
+    this wait the caller's reader threads can stay blocked on the orphaned
+    child's still-open stdout pipe for the full duration of the child's work."""
+    deadline = time.monotonic() + 10.0
+    try:
+        if sys.platform == "win32":
+            targets = {proc.pid}
+            while time.monotonic() < deadline:
+                # Refresh before every tree kill so a shim child created after
+                # the first snapshot is still included in the synchronous PID
+                # fallback. taskkill is repeated while the root remains alive.
+                targets.update(_descendant_pids(proc.pid))
+                try:
+                    result = subprocess.run(
+                        ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                        capture_output=True, text=True, timeout=5,
+                    )
+                except Exception:
+                    result = None
+                if result is None or result.returncode != 0:
+                    for pid in targets:
+                        _hard_kill_pid(pid)
+                try:
+                    proc.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    pass
+                if all(_wait_pid_gone(pid, 0.3) for pid in targets) and proc.poll() is not None:
+                    try:
+                        proc.wait(timeout=0)
+                    except Exception:
+                        pass
+                    return
+                time.sleep(0.1)
+            return
+        else:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except Exception:
+                pass
+            while proc.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.2)
+            return
+    except Exception:
+        pass
+    # Last resort: whatever proc.kill() can reach.
+    try:
+        proc.kill()
+    except Exception:
+        pass
+
+
 def _fallback_cli_locations() -> list[Path]:
     """Well-known install locations to probe when `claude` isn't on PATH.
 
@@ -287,7 +488,13 @@ class ClaudeCLIAgent(ProviderAgentBase):
         )
         # The working directory is now chosen per task (the mission's target
         # project), not pinned to the install dir — see _invoke_blocking.
-        self._timeout = timeout
+        # Normalise the "use the provider default" sentinels (0 or None) to
+        # the module's _DEFAULT_TIMEOUT. Subprocess.run treats timeout=0 as
+        # "time out immediately", not "no deadline", so passing a sentinel
+        # through unmodified would break every task; None also means "no
+        # deadline" there but, whichever arrived, the documented default
+        # (env-overridable _DEFAULT_TIMEOUT) is what should apply.
+        self._timeout = _DEFAULT_TIMEOUT if (timeout is None or timeout == 0) else timeout
 
     async def execute(self, state: MissionState, task: Task, event_bus: EventBus | None = None) -> Any:
         system_prompt = self._load_spec()
@@ -453,24 +660,42 @@ class ClaudeCLIAgent(ProviderAgentBase):
         result (see _StreamParseFailure above) — in both cases this function,
         not the streaming path, is what determines success/failure/output.
         """
+        # subprocess.run(timeout=...) only kills the direct child on Windows,
+        # orphaning descendant processes that keep running (and writing into
+        # `target`) after we've declared the task dead — the same class of
+        # bug fixed for the streaming path below via _terminate_process_tree.
+        proc_popen = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            # Run in the target project, not the Cressida install, so
+            # relative work the agent does lands where the mission acts.
+            cwd=str(target),
+        )
         try:
-            proc = subprocess.run(
-                cmd,
-                input=user_prompt,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=self._timeout,
-                # Run in the target project, not the Cressida install, so
-                # relative work the agent does lands where the mission acts.
-                cwd=str(target),
-            )
+            stdout, stderr = proc_popen.communicate(input=user_prompt, timeout=self._timeout)
+            proc = subprocess.CompletedProcess(cmd, proc_popen.returncode, stdout, stderr)
         except subprocess.TimeoutExpired as exc:
             _logger.error(
                 "Claude CLI timed out: role=%s timeout=%ss cmd=%s",
                 self.role.value, self._timeout, cmd,
             )
+            _terminate_process_tree(proc_popen)
+            try:
+                proc_popen.wait(timeout=5)
+            except Exception:
+                pass
+            finally:
+                for _pipe in (proc_popen.stdout, proc_popen.stderr, proc_popen.stdin):
+                    try:
+                        if _pipe is not None:
+                            _pipe.close()
+                    except Exception:
+                        pass
             raise RuntimeError(
                 f"Claude CLI timed out after {self._timeout}s for role {self.role.value}."
             ) from exc
@@ -609,69 +834,94 @@ class ClaudeCLIAgent(ProviderAgentBase):
         start = time.monotonic()
         timed_out = False
 
-        while True:
-            remaining = self._timeout - (time.monotonic() - start)
-            if remaining <= 0:
-                timed_out = True
-                break
-            try:
-                line = stdout_q.get(timeout=min(remaining, 1.0))
-            except queue.Empty:
-                continue
-            if line is None:
-                break
-            stdout_lines.append(line)
-            stripped = line.strip()
-            if not stripped:
-                continue
-            # Each line is parsed defensively: a malformed or unexpected line
-            # must never break the read loop or affect the eventual result —
-            # it's simply skipped for observability purposes. The final
-            # result still comes only from a well-formed `type: "result"` line.
-            try:
-                data = json.loads(stripped)
-            except Exception:
-                continue
-            try:
-                self._handle_stream_line(data, tool_names, event_bus, loop, mission_id, task_id)
-            except Exception:
-                pass
-            if isinstance(data, dict) and data.get("type") == "result":
-                result_obj = data
-
-        if timed_out:
-            proc.kill()
-            try:
-                proc.wait(timeout=5)
-            except Exception:
-                pass
-            stdout_thread.join(timeout=2)
-            stderr_thread.join(timeout=2)
-            _logger.error(
-                "Claude CLI timed out: role=%s timeout=%ss cmd=%s",
-                self.role.value, self._timeout, cmd,
-            )
-            raise RuntimeError(
-                f"Claude CLI timed out after {self._timeout}s for role {self.role.value}."
-            )
-
         try:
-            returncode = proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+            while True:
+                # self._timeout is None only in the unusual case a caller
+                # explicitly opted out of the per-provider default; the normal
+                # path (create_agent's timeout=0 sentinel) is normalised to
+                # _DEFAULT_TIMEOUT in __init__, so a real deadline is the
+                # common case. "None = no deadline" is honored explicitly
+                # here instead of subtracting a float from None, which raised
+                # TypeError on every single task (see mission_20260810_185544).
+                if self._timeout is None:
+                    remaining = None
+                else:
+                    remaining = self._timeout - (time.monotonic() - start)
+                    if remaining <= 0:
+                        timed_out = True
+                        break
+                try:
+                    line = stdout_q.get(timeout=1.0 if remaining is None else min(remaining, 1.0))
+                except queue.Empty:
+                    continue
+                if line is None:
+                    break
+                stdout_lines.append(line)
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                # Each line is parsed defensively: a malformed or unexpected line
+                # must never break the read loop or affect the eventual result —
+                # it's simply skipped for observability purposes. The final
+                # result still comes only from a well-formed `type: "result"` line.
+                try:
+                    data = json.loads(stripped)
+                except Exception:
+                    continue
+                try:
+                    self._handle_stream_line(data, tool_names, event_bus, loop, mission_id, task_id)
+                except Exception:
+                    pass
+                if isinstance(data, dict) and data.get("type") == "result":
+                    result_obj = data
+
+            if timed_out:
+                # Kill the whole tree, not just the direct child — on Windows
+                # the CLI is a *.cmd shim (cmd.exe -> node.exe); a bare
+                # proc.kill() leaves the agent process orphaned and still
+                # writing to the project dir (see _terminate_process_tree).
+                _terminate_process_tree(proc)
+                try:
+                    proc.wait(timeout=5)
+                except Exception:
+                    pass
+                _logger.error(
+                    "Claude CLI timed out: role=%s timeout=%ss cmd=%s",
+                    self.role.value, self._timeout, cmd,
+                )
+                raise RuntimeError(
+                    f"Claude CLI timed out after {self._timeout}s for role {self.role.value}."
+                )
+
             try:
-                proc.wait(timeout=5)
-            except Exception:
-                pass
-            _logger.error(
-                "Claude CLI timed out: role=%s timeout=%ss cmd=%s",
-                self.role.value, self._timeout, cmd,
-            )
-            raise RuntimeError(
-                f"Claude CLI timed out after {self._timeout}s for role {self.role.value}."
-            )
-        stdout_thread.join(timeout=5)
-        stderr_thread.join(timeout=5)
+                returncode = proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                _terminate_process_tree(proc)
+                try:
+                    proc.wait(timeout=5)
+                except Exception:
+                    pass
+                _logger.error(
+                    "Claude CLI timed out: role=%s timeout=%ss cmd=%s",
+                    self.role.value, self._timeout, cmd,
+                )
+                raise RuntimeError(
+                    f"Claude CLI timed out after {self._timeout}s for role {self.role.value}."
+                )
+            stdout_thread.join(timeout=5)
+            stderr_thread.join(timeout=5)
+        finally:
+            # Release the underlying pipe/file handles on every exit path
+            # (completion, timeout, parse failure, or an unexpected exception)
+            # so we don't leak descriptors or leave reader threads blocked on
+            # them. _terminate_process_tree above already reaped the child on
+            # the timeout paths; these closes are the defensive backstop.
+            for pipe in (proc.stdin, proc.stdout, proc.stderr):
+                try:
+                    if pipe is not None:
+                        pipe.close()
+                except Exception:
+                    pass
 
         stdout_text = "".join(stdout_lines)
         stderr_text = "".join(stderr_chunks)
