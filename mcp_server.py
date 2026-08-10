@@ -128,18 +128,26 @@ _running_missions: dict[str, asyncio.Task | subprocess.Popen] = {}
 
 def _spawn_mission_background(
     mission_id: str, brief_path: str, provider: str, ollama_model: str, project_dir: str,
+    show_window: bool = False,
 ) -> subprocess.Popen | None:
-    """Launch the mission as its own OS process, hidden — no console window.
+    """Launch the mission as its own OS process.
 
-    This used to open a new, visible console window (CREATE_NEW_CONSOLE) so
-    the mission's agent-by-agent output could be watched live. That's no
-    longer the only way to get that visibility: every mission now writes
-    missions/<id>/live_events.jsonl as it runs (core/live_log.py), and
-    `cressida watch` tails it — a real-time view without a popup window
-    stealing focus or cluttering the taskbar every time a mission starts. A
-    separate OS process is still used (matches how the rest of Cressida
-    treats mission state as disk-shared, not in-process — see
-    core/progress.py), it just isn't given a window anymore.
+    Every mission writes missions/<id>/live_events.jsonl as it runs
+    (core/live_log.py), and `cressida watch` tails it for a real-time view —
+    that's the primary, always-available way to see what a mission is
+    doing, headless or not. mission_status/cressida_status polling still
+    works too, unchanged, for callers that just want a point-in-time
+    snapshot rather than a live tail.
+
+    By default (show_window=False) the process runs hidden — no popup
+    console window stealing focus or cluttering the taskbar every time a
+    mission starts. Passing show_window=True brings back the old visible
+    console (CREATE_NEW_CONSOLE) for anyone who wants to watch raw
+    stdout/stderr scroll by directly instead of (or alongside) `cressida
+    watch` / polling — the three are independent and can all be used on the
+    same mission at once. A separate OS process is used either way (matches
+    how the rest of Cressida treats mission state as disk-shared, not
+    in-process — see core/progress.py).
 
     Returns the Popen handle, or None if the subprocess couldn't be started
     at all, in which case the caller falls back to running the mission
@@ -154,20 +162,29 @@ def _spawn_mission_background(
     if project_dir:
         cmd += ["--project-dir", project_dir]
 
-    popen_kwargs: dict = {
-        "cwd": str(_CRESSIDA_ROOT),
-        "stdout": subprocess.DEVNULL,
-        "stderr": subprocess.DEVNULL,
-        "stdin": subprocess.DEVNULL,
-    }
+    popen_kwargs: dict = {"cwd": str(_CRESSIDA_ROOT)}
     if sys.platform == "win32":
-        # CREATE_NO_WINDOW: run detached with no console at all (as opposed to
-        # CREATE_NEW_CONSOLE, which opens one) — the process still runs, it's
-        # just not visible. Pairs with stdio redirected to DEVNULL above,
-        # since there's no window to inherit console handles from anymore.
-        popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        if show_window:
+            # CREATE_NEW_CONSOLE: opens a real, visible console window that
+            # inherits the child's own stdio — no DEVNULL redirect here,
+            # the whole point is to let the raw output scroll in that window.
+            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_CONSOLE
+        else:
+            # CREATE_NO_WINDOW: run detached with no console at all (as
+            # opposed to CREATE_NEW_CONSOLE) — the process still runs, it's
+            # just not visible. Stdio is redirected to DEVNULL since there's
+            # no window to inherit console handles from.
+            popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+            popen_kwargs["stdout"] = subprocess.DEVNULL
+            popen_kwargs["stderr"] = subprocess.DEVNULL
+            popen_kwargs["stdin"] = subprocess.DEVNULL
     else:
+        # No console-window concept off Windows — the visible/hidden
+        # distinction doesn't apply, so show_window is a no-op there.
         popen_kwargs["start_new_session"] = True
+        popen_kwargs["stdout"] = subprocess.DEVNULL
+        popen_kwargs["stderr"] = subprocess.DEVNULL
+        popen_kwargs["stdin"] = subprocess.DEVNULL
 
     try:
         return subprocess.Popen(cmd, **popen_kwargs)
@@ -183,6 +200,7 @@ async def run_mission(
     ollama_model: str = "llama3.2",
     priority: str = "medium",
     project_dir: str = "",
+    show_window: bool = False,
 ) -> str:
     """Start a new Cressida mission from a plain-English brief.
 
@@ -190,15 +208,19 @@ async def run_mission(
     architecture -> BOND gate -> planning -> implementation -> review. Returns
     immediately with a mission ID.
 
-    Usage flow:
-      1. Call run_mission with your brief -> get mission_id
-      2. Call mission_status to check progress
-      3. Call read_mission_file to inspect outputs
+    Usage flow (three independent ways to watch progress — pick any combination):
+      1. `cressida watch <mission_id>` — live, no-polling tail of every event
+         as it happens, down to individual tool calls. This is the primary,
+         always-available option and needs nothing extra passed here.
+      2. Call mission_status(mission_id) — a point-in-time snapshot, for
+         callers that just want to poll occasionally rather than watch live.
+      3. Pass show_window=True to also get a visible console window with the
+         mission subprocess's raw stdout/stderr scrolling in it.
 
     Args:
         brief:        What you want built. Can be a plain-English description
                       or a path to a markdown file containing a PRD.
-        provider:     auto | opencode | claude_cli | codex | anthropic | openai | gemini | groq | ollama
+        provider:     auto | opencode | claude_cli | codex | anthropic | openai | gemini | groq | ollama | kilocode | gateway
         ollama_model: Only used when provider=ollama. Default: llama3.2
         priority:     low | medium | high.
         project_dir:  Absolute path to the project the mission should act on —
@@ -207,6 +229,11 @@ async def run_mission(
                       brief alone is NOT enough, because the agent subprocess is
                       only granted access to directories passed here. Defaults to
                       CRESSIDA_PROJECT_DIR, then the server's working directory.
+        show_window:  If True (Windows only), also open a visible console
+                      window for the mission subprocess, alongside `cressida
+                      watch` / mission_status polling — not instead of them.
+                      Default False: the mission runs hidden, and `cressida
+                      watch` is the main way to see it live.
 
     Returns:
         Mission ID and status message.
@@ -246,14 +273,26 @@ async def run_mission(
     brief_path = out_dir / "brief.md"
     brief_path.write_text(resolved_brief, encoding="utf-8")
 
-    # Spawn the mission as a hidden background process — see
-    # _spawn_mission_background's docstring for why this no longer opens a
-    # visible console window. Falls back to the old in-process asyncio task
-    # if the subprocess couldn't be started at all.
-    proc = _spawn_mission_background(mission_id, str(brief_path), provider, ollama_model, project_dir)
+    # Spawn the mission as its own process — hidden by default (`cressida
+    # watch` is the main way to see it live), or with a visible console
+    # window too if show_window=True. Falls back to the old in-process
+    # asyncio task if the subprocess couldn't be started at all.
+    proc = _spawn_mission_background(
+        mission_id, str(brief_path), provider, ollama_model, project_dir, show_window=show_window,
+    )
     if proc is not None:
         _running_missions[mission_id] = proc
-        window_note = f"Running in the background (no window). Use `cressida watch {mission_id}` for a live view.\n"
+        if show_window:
+            window_note = (
+                f"Running in the background with a visible console window. "
+                f"Use `cressida watch {mission_id}` for the live event view, or "
+                f"mission_status(mission_id=\"{mission_id}\") to poll.\n"
+            )
+        else:
+            window_note = (
+                f"Running in the background (no window). Use `cressida watch {mission_id}` "
+                f"for a live view, or mission_status(mission_id=\"{mission_id}\") to poll.\n"
+            )
     else:
         task = asyncio.create_task(
             _background_mission(
