@@ -60,6 +60,25 @@ def build_parser() -> argparse.ArgumentParser:
     resolve_parser.add_argument("mission_id", type=str, help="Mission ID")
     resolve_parser.add_argument("action", type=str, help="Resolution action description")
 
+    # Tails missions/<id>/live_events.jsonl instead of polling mission_status/MCP —
+    # a headless run (opencode, Claude Code via MCP) has no console window to watch,
+    # so this is the only way to see "still working" vs. "hung" second-by-second.
+    watch_parser = subparsers.add_parser(
+        "watch", help="Live-tail a running mission's event log (no MCP/status polling)"
+    )
+    watch_parser.add_argument(
+        "mission_id", type=str, nargs="?", default=None,
+        help="Mission ID to watch (default: most recently active mission)",
+    )
+    watch_parser.add_argument("--tail", type=int, default=20, help="Number of recent events to show (default: 20)")
+    watch_parser.add_argument(
+        "--poll-interval", type=float, default=0.75, help="Seconds between file polls (default: 0.75)"
+    )
+    watch_parser.add_argument(
+        "--no-follow", action="store_true",
+        help="Print current state once and exit instead of live-tailing forever",
+    )
+
     return parser
 
 
@@ -102,6 +121,17 @@ async def async_main() -> int:
     elif args.command == "resolve-escalation":
         from .commands import resolve_escalation
         return await resolve_escalation(args)
+
+    elif args.command == "watch":
+        from .watch import watch_mission
+        # Sync/blocking (poll-sleep loop) rather than async — nothing else needs
+        # to run concurrently in this process while a human watches the terminal.
+        return watch_mission(
+            args.mission_id,
+            tail=args.tail,
+            poll_interval=args.poll_interval,
+            follow=not args.no_follow,
+        )
 
     else:
         parser.print_help()

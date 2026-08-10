@@ -16,6 +16,8 @@ dependencies = [
     "pyyaml",           # daemon scheduler + inbox YAML briefs
     "rich",
     "click",
+    "numpy",            # core/retrieval: hashed bag-of-words embedding vectors
+    "faiss-cpu",         # core/retrieval: local similarity index for the RAG store
 ]
 
 # LLM providers are optional — install the one you have a key for.
@@ -43,6 +45,7 @@ packages = [
     "cressida.core",
     "cressida.core.providers",
     "cressida.core.tools",
+    "cressida.core.retrieval",
     "cressida.evaluation",
     "cressida.learning",
     "cressida.memory",

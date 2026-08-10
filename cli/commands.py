@@ -46,6 +46,19 @@ def _wire_narrator(event_bus: EventBus) -> None:
         print(f"[commands] console narrator wiring skipped: {e}")
 
 
+def _wire_live_log(event_bus: EventBus) -> None:
+    """Subscribe the JSONL live-event sink (core/live_log.py) so a headless
+    run — no console window, no TTY to narrate into — still has a
+    disk-durable, appendable record that `cressida watch` (or anything else)
+    can tail without polling mission_status."""
+    try:
+        from cressida.core.live_log import wire_live_log
+
+        wire_live_log(event_bus)
+    except Exception as e:
+        print(f"[commands] live log wiring skipped: {e}")
+
+
 def _build_mission_state(
     mission_id: str,
     brief: str,
@@ -301,6 +314,58 @@ def _build_mission_state(
     return state
 
 
+def _rehydrate_from_execution_state(state: MissionState, mission_id: str) -> bool:
+    """If ``missions/<id>/execution_state.json`` already exists, overlay its
+    per-task COMPLETED/FAILED statuses onto the freshly-built (all-PENDING)
+    DAG so ``Coordinator._execute_batch`` — which already skips any task
+    whose status isn't PENDING — re-runs only what never finished.
+
+    This is what makes resuming a crashed/escalated mission a real, built-in
+    path instead of the hand-rolled "rebuild DAG, replay COMPLETED, call
+    coordinator.run_mission" script that previously had to be done by hand
+    reading source (see CRESSIDA_ROBUSTNESS_AND_RETRIEVAL_PLAN.md §3.1). The
+    DAG shape must be deterministic for a given (mission_id, brief, trivial)
+    triple — which it is, since ``_build_mission_state`` is a pure function of
+    those three inputs — or the overlay would apply old statuses to the wrong
+    tasks.
+
+    Returns True if anything was rehydrated (existing execution state found),
+    False for a genuinely fresh mission.
+    """
+    path = mission_dir(mission_id) / "execution_state.json"
+    if not path.exists():
+        return False
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"[commands] resume: could not read {path}, starting fresh: {e}")
+        return False
+
+    tasks_data = payload.get("tasks") or {}
+    if not tasks_data:
+        return False
+
+    resumed = 0
+    for task_id, saved in tasks_data.items():
+        task = state.tasks.get(task_id)
+        if task is None:
+            continue  # DAG shape changed (e.g. brief edited) — ignore stale entries
+        saved_status = str(saved.get("status", "")).upper()
+        if saved_status == TaskStatus.COMPLETED.value:
+            task.status = TaskStatus.COMPLETED
+            task.error = None
+            resumed += 1
+        elif saved_status == TaskStatus.FAILED.value:
+            # Leave FAILED tasks PENDING so they're retried on resume rather
+            # than permanently skipped — a FAILED task is the whole reason a
+            # human is resuming this mission in the first place.
+            continue
+
+    if resumed:
+        print(f"[commands] resuming {mission_id}: {resumed} task(s) already COMPLETED, skipping re-run")
+    return resumed > 0
+
+
 async def run_mission(args: argparse.Namespace) -> int:
     brief_path = Path(args.brief)
     if brief_path.exists():
@@ -313,6 +378,7 @@ async def run_mission(args: argparse.Namespace) -> int:
     event_bus = EventBus()
     _wire_vault_sync(event_bus)
     _wire_narrator(event_bus)
+    _wire_live_log(event_bus)
     registry = AgentRegistry()
     memory = MemorySystem()
     registry.register_default(
@@ -328,6 +394,7 @@ async def run_mission(args: argparse.Namespace) -> int:
     state = _build_mission_state(
         mission_id, brief, target_dir=getattr(args, "project_dir", None), trivial=trivial,
     )
+    _rehydrate_from_execution_state(state, mission_id)
 
     coordinator = Coordinator(registry, event_bus, memory)
     shared = SharedState()
@@ -375,6 +442,7 @@ async def run_daemon(args: argparse.Namespace) -> int:
     event_bus = EventBus()
     _wire_vault_sync(event_bus)
     _wire_narrator(event_bus)
+    _wire_live_log(event_bus)
     registry = AgentRegistry()
     memory = MemorySystem()
     registry.register_default(

@@ -49,20 +49,38 @@ Notes / limitations
 """
 
 import json
+import logging
 import os
 import shutil
 import subprocess
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from cressida.core import AgentRole, MissionState, Task
 from cressida.core.model_tiers import ROLE_MODEL, DEFAULT_MODEL
-from cressida.core.paths import _check_project_dir_is_safe, cressida_home, project_dir
+from cressida.core.paths import _check_project_dir_is_safe, cressida_home, mission_dir, project_dir
 from cressida.core.providers.base import ProviderAgentBase
 
 # How long (seconds) to wait on a single CLI completion before giving up.
 _DEFAULT_TIMEOUT = float(os.environ.get("CRESSIDA_CLAUDE_CLI_TIMEOUT", "3600"))
+
+# The rest of the package has no established `logging` convention (grepping
+# core/ and orchestration/ turns up zero `logging.getLogger`/`basicConfig`
+# calls anywhere — diagnostics today are plain `print(f"[tag] ...")`). This is
+# the first module to use the stdlib `logging` module, so it attaches its own
+# StreamHandler rather than relying on root-logger config that may never
+# happen: without this, `logger.info(...)` below would be silently swallowed
+# (Python's logging "lastResort" handler only surfaces WARNING and above), and
+# a CLI-subprocess failure would go back to being invisible — the exact
+# problem this change exists to fix.
+_logger = logging.getLogger("cressida.claude_cli")
+if not _logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(levelname)s: %(message)s"))
+    _logger.addHandler(_handler)
+    _logger.setLevel(logging.INFO)
 
 # Tools granted to every mission subprocess with no per-call approval (see
 # --allowedTools below). The line we hold: information retrieval and locally-
@@ -271,7 +289,10 @@ class ClaudeCLIAgent(ProviderAgentBase):
         for name, keyword in rejected:
             print(f"[claude-cli] dynamic tool grant '{name}' blocked by keyword backstop ('{keyword}')")
 
-        text = await self._invoke(system_prompt, user_prompt, target, model, extra_tools)
+        text = await self._invoke(
+            system_prompt, user_prompt, target, model, extra_tools,
+            mission_id=state.mission_id, task_id=task.id,
+        )
 
         self._write_output(state.mission_id, task, text)
         return text
@@ -281,18 +302,21 @@ class ClaudeCLIAgent(ProviderAgentBase):
     async def _invoke(
         self, system_prompt: str, user_prompt: str, target: Path | None = None,
         model: str | None = None, extra_tools: list[str] | None = None,
+        mission_id: str | None = None, task_id: str | None = None,
     ) -> str:
         import asyncio
 
         # Run the blocking subprocess in a thread so we don't stall the event
         # loop and stay portable across asyncio subprocess quirks on Windows.
         return await asyncio.get_event_loop().run_in_executor(
-            None, self._invoke_blocking, system_prompt, user_prompt, target, model, extra_tools
+            None, self._invoke_blocking, system_prompt, user_prompt, target, model, extra_tools,
+            mission_id, task_id,
         )
 
     def _invoke_blocking(
         self, system_prompt: str, user_prompt: str, target: Path | None = None,
         model: str | None = None, extra_tools: list[str] | None = None,
+        mission_id: str | None = None, task_id: str | None = None,
     ) -> str:
         # The agent spec can be large; pass it as a file to avoid arg limits.
         spec_file = tempfile.NamedTemporaryFile(
@@ -341,6 +365,11 @@ class ClaudeCLIAgent(ProviderAgentBase):
             all_tools = list(_ALLOWED_TOOLS) + [t for t in (extra_tools or []) if t not in _ALLOWED_TOOLS]
             cmd.extend(["--allowedTools", *all_tools])
 
+            _logger.info(
+                "invoking Claude CLI: role=%s model=%s cwd=%s timeout=%ss cmd=%s",
+                self.role.value, model or self._model, target, self._timeout, cmd,
+            )
+
             try:
                 proc = subprocess.run(
                     cmd,
@@ -355,14 +384,52 @@ class ClaudeCLIAgent(ProviderAgentBase):
                     cwd=str(target),
                 )
             except subprocess.TimeoutExpired as exc:
+                _logger.error(
+                    "Claude CLI timed out: role=%s timeout=%ss cmd=%s",
+                    self.role.value, self._timeout, cmd,
+                )
                 raise RuntimeError(
                     f"Claude CLI timed out after {self._timeout}s for role {self.role.value}."
                 ) from exc
+            except OSError as exc:
+                # Distinct from a nonzero exit: the process never started at all
+                # (binary missing, no exec permission, bad cwd, etc.), so there is
+                # no `proc`/returncode/stderr to inspect — the OSError itself is
+                # the only diagnostic signal, so it's logged before re-raising
+                # rather than falling through to the returncode check below.
+                _logger.error(
+                    "Claude CLI failed to spawn: role=%s cmd=%s error=%r",
+                    self.role.value, cmd, exc,
+                )
+                raise
+
+            # `proc.returncode` is captured and logged raw, with its Python type,
+            # before any formatting/interpretation — this is the value Python's
+            # own subprocess module handed back for the Windows process exit
+            # code, not something Cressida derives or transforms (grepping the
+            # whole package finds no bitmasking, ctypes, or struct pack/unpack
+            # touching returncode anywhere). If it ever again prints as
+            # 4294967295 (0xFFFFFFFF) instead of a small negative number, that
+            # value originates here, at the CPython/Windows boundary, not
+            # downstream in coordinator.py or mcp_server.py.
+            _logger.info(
+                "Claude CLI returned: role=%s returncode=%r type=%s stdout_len=%d stderr_len=%d",
+                self.role.value, proc.returncode, type(proc.returncode).__name__,
+                len(proc.stdout or ""), len(proc.stderr or ""),
+            )
 
             if proc.returncode != 0:
+                log_path = self._write_failure_log(
+                    mission_id, task_id, cmd, proc.returncode, proc.stdout, proc.stderr,
+                )
+                _logger.error(
+                    "Claude CLI exited %r for role %s; full stdout/stderr written to %s",
+                    proc.returncode, self.role.value, log_path,
+                )
                 raise RuntimeError(
                     f"Claude CLI exited {proc.returncode} for role {self.role.value}.\n"
-                    f"stderr: {(proc.stderr or '').strip()[:2000]}"
+                    f"stderr: {(proc.stderr or '').strip()[:2000]}\n"
+                    f"Full log: {log_path}"
                 )
 
             return self._parse_output(proc.stdout)
@@ -371,6 +438,43 @@ class ClaudeCLIAgent(ProviderAgentBase):
                 os.unlink(spec_file.name)
             except OSError:
                 pass
+
+    @staticmethod
+    def _write_failure_log(
+        mission_id: str | None, task_id: str | None, cmd: list[str],
+        returncode: int, stdout: str | None, stderr: str | None,
+    ) -> str:
+        """Persist the full (untruncated) stdout/stderr of a failed CLI
+        invocation to disk, so it survives even if the RuntimeError message
+        (which truncates stderr to 2000 chars) gets truncated again upstream.
+
+        Written under missions/<mission_id>/logs/ — mirroring the existing
+        missions/<mission_id>/outputs/ and missions/<mission_id>/bond_decisions/
+        convention (see ProviderAgentBase._write_output in base.py) — since no
+        "logs" folder existed yet under a mission dir. Falls back to a temp
+        file if mission_id is unavailable, and never raises: a failure while
+        trying to log a failure must not mask the original error.
+        """
+        try:
+            if mission_id:
+                out_dir = mission_dir(mission_id) / "logs"
+            else:
+                out_dir = Path(tempfile.gettempdir()) / "cressida_logs"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            name = f"{task_id or 'unknown_task'}_{stamp}.log"
+            log_path = out_dir / name
+            log_path.write_text(
+                "cmd: " + json.dumps(cmd) + "\n"
+                f"returncode: {returncode!r} (type={type(returncode).__name__})\n"
+                "\n--- stdout ---\n" + (stdout or "") +
+                "\n--- stderr ---\n" + (stderr or ""),
+                encoding="utf-8",
+            )
+            return str(log_path)
+        except Exception as exc:
+            _logger.error("failed to write CLI failure log to disk: %r", exc)
+            return "(failed to write log file)"
 
     @staticmethod
     def _parse_output(stdout: str) -> str:

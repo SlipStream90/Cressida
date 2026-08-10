@@ -102,8 +102,14 @@ def _web_search(query: str, num_results: int = 5, mission_id: str = "") -> str:
 
 
 def _fetch_url(url: str, max_chars: int = 12000, mission_id: str = "") -> str:
-    """Fetch a page and return its readable text. Stdlib-only, no extra deps."""
-    import html as _html
+    """Fetch a page and return its readable text.
+
+    HTML extraction is delegated to core/retrieval/extract.py (readability-
+    style boilerplate stripping — nav/header/footer/ads/etc. — replacing the
+    old bare tag-strip so downstream summarization isn't spending tokens on
+    chrome). Still stdlib-only end to end; the extractor is regex-based, no
+    new dependency.
+    """
     import re
 
     if not url.lower().startswith(("http://", "https://")):
@@ -128,18 +134,13 @@ def _fetch_url(url: str, max_chars: int = 12000, mission_id: str = "") -> str:
     text = raw.decode(charset, errors="ignore")
 
     if "html" in content_type.lower() or text.lstrip()[:100].lower().startswith(("<!doctype", "<html")):
-        # Drop non-content elements entirely, then strip remaining tags.
-        text = re.sub(r"(?is)<(script|style|noscript|svg|head)\b.*?</\1>", " ", text)
-        text = re.sub(r"(?is)<!--.*?-->", " ", text)
-        # Keep block boundaries as newlines so headings/lists stay readable.
-        text = re.sub(r"(?i)<(br|/p|/div|/li|/h[1-6]|/tr)\s*/?>", "\n", text)
-        text = re.sub(r"(?s)<[^>]+>", " ", text)
-        text = _html.unescape(text)
-
-    # Collapse whitespace without losing paragraph structure.
-    text = re.sub(r"[ \t\r\f\v]+", " ", text)
-    text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text)
-    text = "\n".join(line.strip() for line in text.split("\n")).strip()
+        from cressida.core.retrieval.extract import extract_main_content
+        text = extract_main_content(text)
+    else:
+        # Non-HTML (plain text, JSON, etc.) — just collapse whitespace.
+        text = re.sub(r"[ \t\r\f\v]+", " ", text)
+        text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text)
+        text = "\n".join(line.strip() for line in text.split("\n")).strip()
 
     if not text:
         return f"Fetched {url} but extracted no readable text (content-type: {content_type})."
@@ -169,6 +170,27 @@ def _run_shell(command: str, cwd: str | None = None, timeout: int = 60, mission_
         return f"Timed out after {timeout}s: {command}"
     except Exception as exc:
         return f"Shell error: {exc}"
+
+
+_retrieval_router: Any = None  # lazy singleton — see _get_retrieval_router below
+
+
+def _get_retrieval_router() -> Any:
+    """One RetrievalRouter (and its RetrievalStore/FAISS index) per process.
+
+    Reopening the FAISS index + SQLite sidecar on every _query_memory call
+    would be wasteful and, worse, would drop web-search write-backs made
+    earlier in the same process if a fresh RetrievalStore() were constructed
+    each time and something raced the on-disk file. A module-level singleton
+    matches how the rest of this file treats per-process resources (there is
+    no cache for MemoryRetrieval/get_bridge() either, but those are cheap to
+    reconstruct; a FAISS index is not).
+    """
+    global _retrieval_router
+    if _retrieval_router is None:
+        from cressida.core.retrieval.router import RetrievalRouter
+        _retrieval_router = RetrievalRouter()
+    return _retrieval_router
 
 
 def _query_memory(keywords: list[str], task_type: str = "", top_k: int = 5, mission_id: str = "") -> str:
@@ -202,6 +224,22 @@ def _query_memory(keywords: list[str], task_type: str = "", top_k: int = 5, miss
                 )
     except Exception:
         pass
+
+    # 3. Two-tier RAG + live web fallback (plan §4.4: query_memory is the
+    # single entry point the router lives behind, so LEITER/INTELLIGENCE need
+    # no new tool grant to get RAG-first/web-fallback retrieval). Only
+    # reached when the cheap local tiers above found nothing, so a query
+    # that's already answered by strategic memory/vault never pays for an
+    # embedding search or a live web round-trip.
+    if not parts:
+        try:
+            router = _get_retrieval_router()
+            query = " ".join(keywords)
+            routed = router.route(query, mission_id=mission_id, web_search_fn=_web_search, fetch_url_fn=_fetch_url)
+            if routed:
+                parts.append(f"[retrieval]\n{routed}")
+        except Exception:
+            pass
 
     if not parts:
         return "No relevant memory or vault notes found."

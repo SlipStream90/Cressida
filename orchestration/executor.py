@@ -223,6 +223,20 @@ class TaskExecutor:
             encoding="utf-8",
         )
 
+    # Signatures of the transient "-1"/4294967295 (0xFFFFFFFF) exit code class
+    # (see core/providers/claude_cli_agent.py) — a Windows job-object/console
+    # kill or similar environmental termination, not a logic error in the
+    # prompt or task. Three consecutive missions were fully written off by
+    # this before a single retry existed on this code path (Coordinator's
+    # execute_task, as opposed to the separate execute_backlog path, which
+    # already retried) — see CRESSIDA_ROBUSTNESS_AND_RETRIEVAL_PLAN.md §3.3.
+    _TRANSIENT_EXIT_CODE_MARKERS = ("exited -1", "exited 4294967295")
+
+    @classmethod
+    def _is_transient_failure(cls, error: str) -> bool:
+        lowered = error.lower()
+        return any(marker in lowered for marker in cls._TRANSIENT_EXIT_CODE_MARKERS)
+
     async def execute_task(self, task: Task, state: MissionState) -> None:
         task.status = TaskStatus.IN_PROGRESS
         task.started_at = datetime.now()
@@ -239,45 +253,70 @@ class TaskExecutor:
             task.status = TaskStatus.FAILED
             task.error = f"No agent registered for role: {role}"
             return
-        try:
-            result = await agent.execute(state, task)
 
-            if role in _VERIFY_FILES_WRITTEN_ROLES and not _wrote_files_since(
-                state.mission_id, task.started_at, project_dir(state)
-            ):
-                task.status = TaskStatus.FAILED
+        attempt = 0
+        max_transient_retries = 2  # 3 total attempts, matching the plan's "2 attempts, exponential"
+        while True:
+            try:
+                result = await agent.execute(state, task)
+
+                if role in _VERIFY_FILES_WRITTEN_ROLES and not _wrote_files_since(
+                    state.mission_id, task.started_at, project_dir(state)
+                ):
+                    task.status = TaskStatus.FAILED
+                    task.completed_at = datetime.now()
+                    task.output = result
+                    task.error = (
+                        f"{role.value} returned without writing any files to the mission or "
+                        "project directory. Likely a denied file write (e.g. a sandboxed CLI "
+                        "subprocess with no one to approve the edit) that the agent narrated "
+                        "as text instead of raising — treating that as a completed "
+                        "implementation would silently ship no code."
+                    )
+                    await self._event_bus.publish(Event(
+                        type=EventType.TASK_FAILED,
+                        data={"task_id": task.id, "mission_id": state.mission_id, "error": task.error},
+                        source="executor",
+                    ))
+                    return
+
+                task.status = TaskStatus.COMPLETED
                 task.completed_at = datetime.now()
                 task.output = result
-                task.error = (
-                    f"{role.value} returned without writing any files to the mission or "
-                    "project directory. Likely a denied file write (e.g. a sandboxed CLI "
-                    "subprocess with no one to approve the edit) that the agent narrated "
-                    "as text instead of raising — treating that as a completed "
-                    "implementation would silently ship no code."
-                )
                 await self._event_bus.publish(Event(
-                    type=EventType.TASK_FAILED,
-                    data={"task_id": task.id, "mission_id": state.mission_id, "error": task.error},
+                    type=EventType.TASK_COMPLETED,
+                    data={"task_id": task.id, "mission_id": state.mission_id},
                     source="executor",
                 ))
                 return
 
-            task.status = TaskStatus.COMPLETED
-            task.completed_at = datetime.now()
-            task.output = result
-            await self._event_bus.publish(Event(
-                type=EventType.TASK_COMPLETED,
-                data={"task_id": task.id, "mission_id": state.mission_id},
-                source="executor",
-            ))
-        except Exception as e:
-            task.status = TaskStatus.FAILED
-            task.error = str(e)
-            await self._event_bus.publish(Event(
-                type=EventType.TASK_FAILED,
-                data={"task_id": task.id, "mission_id": state.mission_id, "error": str(e)},
-                source="executor",
-            ))
+            except Exception as e:
+                error_str = str(e)
+                if attempt < max_transient_retries and self._is_transient_failure(error_str):
+                    attempt += 1
+                    delay = self._retry_delay * (2 ** (attempt - 1))
+                    await self._event_bus.publish(Event(
+                        type=EventType.TASK_BLOCKED,
+                        data={
+                            "task_id": task.id, "mission_id": state.mission_id,
+                            "error": f"Transient failure (attempt {attempt}/{max_transient_retries}), "
+                                     f"retrying in {delay}s: {error_str[:300]}",
+                        },
+                        source="executor",
+                    ))
+                    await asyncio.sleep(delay)
+                    task.status = TaskStatus.IN_PROGRESS
+                    task.started_at = datetime.now()
+                    continue
+
+                task.status = TaskStatus.FAILED
+                task.error = error_str
+                await self._event_bus.publish(Event(
+                    type=EventType.TASK_FAILED,
+                    data={"task_id": task.id, "mission_id": state.mission_id, "error": error_str},
+                    source="executor",
+                ))
+                return
 
     async def execute_parallel(self, tasks: list[Task], state: MissionState) -> None:
         await asyncio.gather(*[self.execute_task(t, state) for t in tasks])

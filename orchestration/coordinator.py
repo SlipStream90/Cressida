@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,18 @@ from .dispatcher import Dispatcher
 from .executor import TaskExecutor
 from .router import TaskRouter
 from .scheduler import Scheduler
+
+
+# See core/providers/claude_cli_agent.py for why this module attaches its own
+# handler rather than assuming root-logger config exists elsewhere in the
+# package (it doesn't, as of this change — grepping core/ and orchestration/
+# found zero prior logging.getLogger/basicConfig calls).
+_logger = logging.getLogger("cressida.coordinator")
+if not _logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(levelname)s: %(message)s"))
+    _logger.addHandler(_handler)
+    _logger.setLevel(logging.INFO)
 
 
 class CoordinationError(Exception):
@@ -106,6 +119,7 @@ class Coordinator:
         except CyclicDependencyError as e:
             state.status = MissionStatus.FAILED
             self._persist_state(state)
+            _logger.error("mission %s failed: cyclic dependency: %s", state.mission_id, e)
             await self._event_bus.publish(
                 Event(type=EventType.MISSION_FAILED, data={"mission_id": state.mission_id, "error": str(e)}, source="coordinator")
             )
@@ -113,6 +127,13 @@ class Coordinator:
         except Exception as e:
             state.status = MissionStatus.FAILED
             self._persist_state(state)
+            # str(e) is what reaches execution_state.json's "error" field
+            # (below) and MISSION_FAILED's event data, but that alone drops the
+            # traceback — logger.exception() records it (at the point the
+            # exception is actually caught, not re-derived later) so the
+            # original raise site survives even if str(e) is uninformative,
+            # same rationale as the CLI failure log in claude_cli_agent.py.
+            _logger.exception("mission %s failed with an uncaught exception", state.mission_id)
             await self._event_bus.publish(
                 Event(type=EventType.MISSION_FAILED, data={"mission_id": state.mission_id, "error": str(e)}, source="coordinator")
             )
@@ -207,8 +228,12 @@ class Coordinator:
         # unsuffixed "APPROVE"/"REJECT" as well as "APPROVED"/"REJECTED"), then
         # for an embedded ```json ... approved_mcp_tools ... ``` fence if BOND
         # included one.
+        # Non-greedy `[^\n]*?` (not just `[:\s]*`) so phrasing like "Decision
+        # recorded: **APPROVED**" still matches — a real BOND output that the
+        # stricter pattern missed, silently parsing as decision="" and
+        # falsely blocking an approved mission (see mission_20260810_073356).
         m = _re.search(
-            r"(?:decision|verdict|gate)[:\s]*\**\s*(APPROVE(?:D)?|REJECT(?:ED)?|ESCALATE(?:D)?)",
+            r"(?:decision|verdict|gate)[^\n]*?[:\s]*\**\s*(APPROVE(?:D)?|REJECT(?:ED)?|ESCALATE(?:D)?)",
             text, _re.IGNORECASE,
         )
         decision = m.group(1).upper() if m else ""
@@ -283,13 +308,31 @@ class Coordinator:
                 "No approval on record — refusing to proceed to planning/implementation."
             )
 
-        candidates = sorted(
-            (p for p in decisions_dir.iterdir() if p.suffix in (".json", ".md")),
-            key=lambda p: p.stat().st_mtime, reverse=True,
+        # Prefer .json over .md outright, rather than "most recent by mtime" —
+        # mtime is a race between BOND's own JSON write and markdown write
+        # (both can land in the same second under claude_cli's non-interactive
+        # tool fallback), not a meaningful signal of which one reflects BOND's
+        # actual decision. JSON is structured and unambiguous; markdown-regex
+        # parsing (_parse_bond_decision_file) is the fragile fallback and
+        # should only be consulted when no JSON artifact exists at all. Within
+        # each tier, still break ties by mtime (latest write wins).
+        json_candidates = sorted(
+            decisions_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True,
         )
+        md_candidates = sorted(
+            decisions_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True,
+        )
+        candidates = json_candidates or md_candidates
         if not candidates:
             return False, (
                 f"BOND's decisions directory ({decisions_dir}) is empty — no approval on record."
+            )
+        if not json_candidates:
+            _logger.warning(
+                "mission %s: no JSON BOND decision found, falling back to markdown-regex "
+                "parsing of %s — this path is fragile (phrasing drift can misparse an "
+                "actual APPROVED as unapproved); prefer BOND emitting a JSON decision file.",
+                state.mission_id, candidates[0],
             )
 
         latest = candidates[0]
@@ -416,6 +459,16 @@ class Coordinator:
                     }, source="coordinator")
                 )
             elif task.status == TaskStatus.FAILED:
+                # task.error is whatever str(exc) the executor caught (see
+                # TaskExecutor.execute_task in executor.py) — logged here in
+                # full, at the point it's about to become execution_state.json's
+                # "error" field, since that field is the only place a human
+                # investigating a dead mission looks first.
+                _logger.error(
+                    "task %s (agent=%s) failed in batch %d: %s",
+                    task.id, task.agent.value if task.agent else "unknown",
+                    batch_idx, task.error or "unknown error",
+                )
                 state.fail_task(task.id, task.error or "unknown error")
 
         self._persist_state(state)
@@ -460,6 +513,18 @@ class Coordinator:
             )
             skills = self._skills.synthesize_from_mission(state)
             self._curator.consolidate_all(decay=False)
+
+            # Feed this mission's distilled lessons into the retrieval store
+            # (core/retrieval/) so future missions' query_memory calls can hit
+            # them, per the wiring note in core/retrieval/ingest.py. Best-effort
+            # like everything else in this method — retrieval indexing must
+            # never affect a mission's outcome.
+            try:
+                from cressida.core.retrieval.ingest import ingest_learning_insights
+
+                ingest_learning_insights(insights)
+            except Exception as e:
+                print(f"[coordinator] retrieval ingestion skipped: {e}")
             print(
                 f"[learning] mission {state.mission_id}: "
                 f"{len(insights)} lesson(s), {len(skills)} skill(s) touched."

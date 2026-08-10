@@ -9,9 +9,12 @@ silent between "Starting mission: ..." and the final result line — nothing
 printed while research/architecture/implementation actually happened, even
 though a single phase can run for minutes. ConsoleNarrator subscribes to the
 mission's own EventBus (core/events.py) and prints one line per
-task-lifecycle event, so `cressida run` and each mission's own spawned
-console window (mcp_server.py::_spawn_mission_window) show real, continuous
-progress instead of a long silent wait.
+task-lifecycle event, so `cressida run` in a real terminal shows real,
+continuous progress instead of a long silent wait. Missions spawned by
+mcp_server.py (mcp_server.py::_spawn_mission_background) run with stdio
+redirected to DEVNULL and have no console to print into — those rely on
+`cressida watch` tailing missions/<id>/live_events.jsonl instead (see
+core/live_log.py).
 """
 
 import sys
@@ -24,9 +27,8 @@ from cressida.core.events import Event, EventBus, EventType
 class ConsoleNarrator:
     """Prints a live, human-readable narrative of mission progress to stdout.
 
-    Uses plain ASCII tags ("[RUN]", "[OK]", ...) rather than emoji: this
-    prints straight to a freshly spawned console window (see
-    mcp_server.py::_spawn_mission_window), which on Windows defaults to the
+    Uses plain ASCII tags ("[RUN]", "[OK]", ...) rather than emoji: a
+    directly-launched `cressida run` terminal on Windows defaults to the
     legacy cp1252 codepage — emoji there raise UnicodeEncodeError on every
     single line, and a broad except silently eats it, so the "live" narration
     would in practice print nothing at all.
