@@ -31,15 +31,20 @@ Notes / limitations
   For very large prompts, consider using --file to attach a prompt file.
 """
 
+import asyncio
 import json
 import os
+import queue
 import shutil
 import subprocess
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
 from cressida.core import AgentRole, MissionState, Task
 from cressida.core.paths import project_dir
+from cressida.core.events import EventBus
 from cressida.core.providers.base import ProviderAgentBase
 
 
@@ -130,7 +135,7 @@ class OpenCodeAgent(ProviderAgentBase):
         # rather than pinned to the install dir — see _invoke_blocking.
         self._timeout = timeout
 
-    async def execute(self, state: MissionState, task: Task) -> Any:
+    async def execute(self, state: MissionState, task: Task, event_bus: EventBus | None = None) -> Any:
         system_prompt = self._load_spec()
         user_prompt = self._build_user_prompt(state, task)
 
@@ -140,21 +145,38 @@ class OpenCodeAgent(ProviderAgentBase):
         full_prompt = f"[Agent Spec: {self.role.value}]\n\n{system_prompt}\n\n---\n\n[Task]\n\n{user_prompt}"
 
         # Run against the mission's target project, not the Cressida install.
-        text = await self._invoke(full_prompt, project_dir(state))
+        text, tool_events = await self._invoke(full_prompt, project_dir(state))
+
+        # Best-effort observability, strictly after the result is already in
+        # hand — parsed from the completed JSONL output rather than a live
+        # Popen read (same tradeoff KiloCodeAgent makes; see its docstring).
+        # Wrapped in try/except on top of publish_safe's own never-raise
+        # guarantee so this can never change execute()'s return value.
+        try:
+            for ev in tool_events:
+                await self._emit_tool_started(
+                    event_bus, state.mission_id, task.id, ev["tool"], tool_input=ev.get("input"),
+                )
+                await self._emit_tool_completed(
+                    event_bus, state.mission_id, task.id, ev["tool"],
+                    result=ev.get("output"), is_error=ev.get("is_error", False),
+                )
+        except Exception:
+            pass
 
         self._write_output(state.mission_id, task, text)
         return text
 
     # ── CLI invocation ──────────────────────────────────────────────────────
 
-    async def _invoke(self, prompt: str, target: Path | None = None) -> str:
+    async def _invoke(self, prompt: str, target: Path | None = None) -> tuple[str, list[dict[str, Any]]]:
         import asyncio
 
         return await asyncio.get_event_loop().run_in_executor(
             None, self._invoke_blocking, prompt, target
         )
 
-    def _invoke_blocking(self, prompt: str, target: Path | None = None) -> str:
+    def _invoke_blocking(self, prompt: str, target: Path | None = None) -> tuple[str, list[dict[str, Any]]]:
         work_dir = str((target or project_dir()).resolve())
         cmd = [
             self._cli,
@@ -194,19 +216,23 @@ class OpenCodeAgent(ProviderAgentBase):
         return self._parse_output(proc.stdout)
 
     @staticmethod
-    def _parse_output(stdout: str) -> str:
-        """Extract the assistant text from `--format json` stdout.
+    def _parse_output(stdout: str) -> tuple[str, list[dict[str, Any]]]:
+        """Extract the assistant text and any tool-call events from
+        `--format json` stdout.
 
         OpenCode outputs JSONL (one JSON object per line). We look for
-        the last message-type event with content, filtering out tool calls
-        and other non-text events.
+        the last message-type event with content for the text result, and
+        collect tool_use/tool_result events (best-effort, for observability
+        only — see execute()'s "Best-effort observability" comment).
         """
         raw = (stdout or "").strip()
         if not raw:
-            return ""
+            return "", []
 
         lines = raw.splitlines()
         last_content = ""
+        tool_events: list[dict[str, Any]] = []
+        pending_tool_calls: dict[str, dict[str, Any]] = {}
 
         for line in lines:
             line = line.strip()
@@ -223,10 +249,35 @@ class OpenCodeAgent(ProviderAgentBase):
             if not isinstance(data, dict):
                 continue
 
-            # Skip tool_use events (these are agent actions, not text output)
+            # Record tool calls/results for observability, but they never
+            # contribute to the returned text (unchanged from before).
             if data.get("type") == "tool_use":
+                call_id = data.get("id") or data.get("tool_use_id")
+                entry = {
+                    "tool": data.get("name") or data.get("tool") or "unknown",
+                    "input": data.get("input"),
+                    "output": None,
+                    "is_error": False,
+                }
+                tool_events.append(entry)
+                if call_id:
+                    pending_tool_calls[call_id] = entry
                 continue
             if data.get("type") == "tool_result":
+                call_id = data.get("id") or data.get("tool_use_id")
+                target_entry = pending_tool_calls.get(call_id) if call_id else None
+                output = data.get("output") if "output" in data else data.get("content")
+                is_error = bool(data.get("is_error"))
+                if target_entry is not None:
+                    target_entry["output"] = output
+                    target_entry["is_error"] = is_error
+                else:
+                    tool_events.append({
+                        "tool": data.get("name") or data.get("tool") or "unknown",
+                        "input": None,
+                        "output": output,
+                        "is_error": is_error,
+                    })
                 continue
 
             # Look for message events with content
@@ -250,11 +301,11 @@ class OpenCodeAgent(ProviderAgentBase):
                 last_content = data["text"]
 
         if last_content:
-            return last_content.strip()
+            return last_content.strip(), tool_events
 
         # Fallback: try to extract any text-looking content from the raw output
         # Look for markdown-formatted content (common in agent outputs)
         if "```" in raw or "# " in raw:
-            return raw
+            return raw, tool_events
 
-        return ""
+        return "", tool_events

@@ -171,7 +171,7 @@ class TaskExecutor:
                         description=item.get("description", ""),
                         agent=agent_role,
                     )
-                    await agent.execute(fake_state, fake_task)
+                    await agent.execute(fake_state, fake_task, event_bus=self._event_bus)
 
                 task_status[tid] = "completed"
                 completed.add(tid)
@@ -258,7 +258,7 @@ class TaskExecutor:
         max_transient_retries = 2  # 3 total attempts, matching the plan's "2 attempts, exponential"
         while True:
             try:
-                result = await agent.execute(state, task)
+                result = await agent.execute(state, task, event_bus=self._event_bus)
 
                 if role in _VERIFY_FILES_WRITTEN_ROLES and not _wrote_files_since(
                     state.mission_id, task.started_at, project_dir(state)

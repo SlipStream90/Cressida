@@ -23,13 +23,13 @@ From research and architecture to implementation, review, and continuous learnin
 ![License](https://img.shields.io/badge/License-MIT-success)
 ![MCP](https://img.shields.io/badge/MCP-Compatible-purple)
 ![Platform](https://img.shields.io/badge/macOS-Linux-Windows-orange)
-![Providers](https://img.shields.io/badge/Providers-8-green)
+![Providers](https://img.shields.io/badge/Providers-9-green)
 
 </p>
 
 Supports
 
-**Claude Code • Codex • OpenCode • Anthropic • OpenAI • Gemini • Groq • Ollama**
+**Claude Code • Codex • OpenCode • Kilo Code • Anthropic • OpenAI • Gemini • Groq • Ollama**
 
 ---
 
@@ -173,7 +173,7 @@ CRESSIDA: `User → Mission Commissioner → Research Team → Architecture Team
 - **Autonomous Software Engineering** — specialized engineers collaborate like a real engineering team, not a single repeatedly-prompted model.
 - **Parallel Execution** — independent work runs simultaneously (Research/Methodology/Product Definition together; Backend/Frontend/Infrastructure together). Only genuine dependencies block progress.
 - **Mission Commissioning** — every task is analyzed before execution to pick its agent, tools, skills, and model tier, keeping prompts small and focused (see [Mission Commissioning](#mission-commissioning) below).
-- **Provider Agnostic** — the same mission runs unchanged on Claude Code, Codex, OpenCode, Anthropic, OpenAI, Gemini, Groq, or Ollama.
+- **Provider Agnostic** — the same mission runs unchanged on Claude Code, Codex, OpenCode, Kilo Code, Anthropic, OpenAI, Gemini, Groq, or Ollama.
 - **Human Approval Gates** — BOND reviews the architecture before implementation starts; a mission can continue, reject itself, or escalate to a human before a line of code is written (see [Human Approval Gates](#human-approval-gates)).
 - **Failsafe Execution** — transient failures retry automatically with backoff, BOND's decision parsing prefers structured JSON over free-text markdown, and a crashed or escalated mission resumes instead of restarting from scratch — already-completed tasks are never re-run (see [Reliability & Live Monitoring](#reliability--live-monitoring)).
 - **Retrieval-Augmented Memory** — research agents check a local, persistent knowledge store before hitting the live web, and every web result and every mission's distilled lessons feed back into it, so later missions get faster, cache-hit answers to questions earlier ones already answered (see [Continuous Learning](#continuous-learning)).
@@ -290,14 +290,14 @@ cressida resolve-escalation mission_id "Approved"
 
 ## Live progress, no polling
 
-Every mission — headless (e.g. driven from opencode or Claude Code via MCP) or interactive — writes `missions/<id>/live_events.jsonl` as it runs: one line per lifecycle event (task started/completed/failed, mission phase changes, gate decisions), the moment it happens. `cressida watch` tails that file instead of repeatedly calling `mission_status`:
+Every mission — headless (e.g. driven from opencode or Claude Code via MCP) or interactive — writes `missions/<id>/live_events.jsonl` as it runs: one line per event, the moment it happens. That includes mission-level lifecycle (task started/completed/failed, phase changes, gate decisions) *and* intra-task tool activity — every file read, edit, and bash command an agent runs shows up live, the same way Claude Code's own interactive CLI shows its tool use as it happens, instead of only the before/after of a whole task. `cressida watch` tails that file instead of repeatedly calling `mission_status`:
 
 ```bash
 cressida watch                      # auto-attaches to the most recently active mission
 cressida watch mission_20260810_1200 --tail 30 --poll-interval 0.5
 ```
 
-It shows the mission's current phase, a scrolling tail of recent events, and a "Ns since last event" heartbeat — so a long-running phase reads as "still working" instead of looking indistinguishable from a hang. When Cressida spawns a mission via its MCP server, it now runs as a hidden background process (no popup console window) — `cressida watch` is the live view for that case.
+It shows the mission's current phase, a scrolling tail of recent events (including which tool is running right now, e.g. `-> BRANCH calling bash({"command": "npm test"})`), and a "Ns since last event" heartbeat — so a long-running task reads as "still working on X" instead of looking indistinguishable from a hang. This works across every provider — the native Anthropic agent and the OpenAI/Gemini/Groq/Ollama providers stream it directly from their own tool-use loop, and the CLI-subprocess providers (Claude Code, OpenCode, Codex, Kilo Code) surface it from their own JSON/JSONL event streams where the underlying CLI exposes one. It's purely observational: the extra events are published on a best-effort side channel that can never change a task's result, output, or control flow, under any provider. When Cressida spawns a mission via its MCP server, it now runs as a hidden background process (no popup console window) — `cressida watch` is the live view for that case.
 
 ## Automatic retry and resume
 
@@ -331,7 +331,7 @@ cressida run brief.md --mission-id mission_20260810_1200   # resumes if that mis
 
 CRESSIDA automatically detects whichever provider you already use — no configuration changes needed when switching.
 
-**Priority:** `CRESSIDA_PROVIDER` env var → Anthropic/OpenAI/Gemini/Groq API keys → Claude Code CLI → OpenCode CLI → Codex CLI → Ollama
+**Priority:** `CRESSIDA_PROVIDER` env var → Anthropic/OpenAI/Gemini/Groq API keys → Claude Code CLI → OpenCode CLI → Codex CLI → Kilo Code CLI → Ollama
 
 | Provider | Setup |
 |---|---|
@@ -343,8 +343,19 @@ CRESSIDA automatically detects whichever provider you already use — no configu
 | Claude Code | No API key — auto-discovered if logged in. `--provider claude_cli` |
 | OpenCode | No API key — auto-discovered if logged in. `--provider opencode` |
 | Codex | No API key — auto-discovered if logged in. `--provider codex` |
+| Kilo Code | No API key — auto-discovered if logged in. `--provider kilocode` |
 
-The three CLI providers each run their own real agentic tool-use loop per task (not a single-shot completion) — Cressida shells out to `claude -p` / `opencode run` / `codex exec` non-interactively and reads back the final result.
+The four CLI providers each run their own real agentic tool-use loop per task (not a single-shot completion) — Cressida shells out to `claude -p` / `opencode run` / `codex exec` / `kilo run` non-interactively and reads back the final result.
+
+### Gateway routing (`--provider gateway`)
+
+Instead of picking one provider for the whole mission, `--provider gateway` probes every provider you have available (API keys set, CLIs on PATH) and chooses a different one **per agent role**, based on how demanding that role's tier is — strategic/planning roles get routed to the strongest available provider, fast one-shot classification roles get routed to the quickest one, and everything else falls in between. It never invents a provider outside what's actually available on your machine, and if nothing is available it fails with the same error `--provider auto` would.
+
+```bash
+cressida run brief.md --provider gateway
+```
+
+See `core/providers/gateway.py` for the exact per-role scoring table (a tunable heuristic, not a benchmark).
 
 ---
 
@@ -534,7 +545,7 @@ Each subsystem is independently replaceable.
 cressida/
 ├── agents/            specifications, constitution, prompts
 ├── orchestration/      coordinator, dispatcher, scheduler, executor, dependency_graph
-├── core/providers/     anthropic, openai, gemini, groq, ollama, claude_cli, opencode, codex
+├── core/providers/     anthropic, openai, gemini, groq, ollama, claude_cli, opencode, codex, kilocode
 ├── core/retrieval/     extraction, summarization, FAISS store, staleness-routed RAG
 ├── core/live_log.py    per-mission JSONL event sink (backs `cressida watch`)
 ├── learning/           reflection, playbooks, skills, rewards, curator
@@ -580,7 +591,7 @@ cressida dashboard   # or: cressida daemon
 
 # FAQ
 
-**Does CRESSIDA require Claude?** No — Claude Code, Codex, OpenCode, Anthropic, OpenAI, Gemini, Groq, and Ollama are all supported.
+**Does CRESSIDA require Claude?** No — Claude Code, Codex, OpenCode, Kilo Code, Anthropic, OpenAI, Gemini, Groq, and Ollama are all supported.
 
 **Can I use local models?** Yes, via Ollama.
 

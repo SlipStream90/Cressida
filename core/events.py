@@ -28,6 +28,16 @@ class EventType(StrEnum):
     ERROR_OCCURRED = auto()
     TASK_STALLED = auto()
     MISSION_SPAWNED = auto()
+    # Intra-task observability — a task_started/task_completed pair brackets
+    # an entire agent turn that can run for minutes; these fire for each
+    # individual tool call *inside* that turn (file read/write, bash command,
+    # web search, ...) so a live viewer (`cressida watch`) can show what's
+    # actually happening right now, not just "task X is running". Emitted on
+    # a best-effort basis (see publish_safe below) by provider agents that
+    # support it — providers that don't emit these simply never publish them,
+    # which degrades gracefully back to today's task-level-only visibility.
+    TOOL_USE_STARTED = auto()
+    TOOL_USE_COMPLETED = auto()
 
 
 @dataclass
@@ -92,3 +102,30 @@ class EventBus:
 
     def clear(self) -> None:
         self._history.clear()
+
+
+async def publish_safe(
+    event_bus: EventBus | None,
+    event_type: EventType,
+    data: dict[str, Any],
+    source: AgentRole | str,
+) -> None:
+    """Publish an event that can never affect the caller's control flow.
+
+    Built for provider agents' intra-task observability events (see
+    TOOL_USE_STARTED/COMPLETED above): those are a purely additive side
+    channel, and a caller instrumenting its own agentic loop with these calls
+    must never have that instrumentation change whether a task succeeds,
+    fails, or what it returns. `EventBus.publish` already isolates subscriber
+    handler exceptions from each other, but a bad `event_bus` (None — the
+    default before a caller wires one in) or a bad `data` dict (e.g. containing
+    something that can't be handled downstream) is not something callers
+    should have to guard against individually at every call site, so this
+    swallows both cases and never raises.
+    """
+    if event_bus is None:
+        return
+    try:
+        await event_bus.publish(Event(type=event_type, data=data, source=source))
+    except Exception:
+        pass

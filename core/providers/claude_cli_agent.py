@@ -48,12 +48,16 @@ Notes / limitations
   auth and would defeat the whole point of using the CLI's own login.
 """
 
+import asyncio
 import json
 import logging
 import os
+import queue
 import shutil
 import subprocess
 import tempfile
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -61,6 +65,7 @@ from typing import Any
 from cressida.core import AgentRole, MissionState, Task
 from cressida.core.model_tiers import ROLE_MODEL, DEFAULT_MODEL
 from cressida.core.paths import _check_project_dir_is_safe, cressida_home, mission_dir, project_dir
+from cressida.core.events import EventBus
 from cressida.core.providers.base import ProviderAgentBase
 
 # How long (seconds) to wait on a single CLI completion before giving up.
@@ -230,6 +235,25 @@ def claude_cli_path() -> str | None:
     return None
 
 
+class _StreamParseFailure(Exception):
+    """Internal signal only — never escapes _invoke_blocking.
+
+    Raised when the `--output-format stream-json` invocation completed with
+    exit code 0 (i.e. the CLI itself did not fail) but our incremental parser
+    never saw a `type: "result"` line, so there is no reliable final text to
+    return. This is the "streaming/incremental parsing failed for some
+    reason" case called out in the hard constraint: rather than guessing at a
+    result, the caller falls back to the original blocking
+    `--output-format json` invocation, which is what determines success,
+    failure, and output from that point on — identical to pre-streaming
+    behavior. Real CLI failures (nonzero exit, timeout, spawn failure) raise
+    RuntimeError/OSError directly instead of this, and are NOT retried, since
+    a fallback invocation would just fail the same way (and re-running a
+    successful-looking task and getting a different final answer would itself
+    be a correctness problem).
+    """
+
+
 class ClaudeCLIAgent(ProviderAgentBase):
     """Agent that produces output by shelling out to the `claude` CLI."""
 
@@ -265,7 +289,7 @@ class ClaudeCLIAgent(ProviderAgentBase):
         # project), not pinned to the install dir — see _invoke_blocking.
         self._timeout = timeout
 
-    async def execute(self, state: MissionState, task: Task) -> Any:
+    async def execute(self, state: MissionState, task: Task, event_bus: EventBus | None = None) -> Any:
         system_prompt = self._load_spec()
         user_prompt = self._build_user_prompt(state, task)
 
@@ -291,7 +315,7 @@ class ClaudeCLIAgent(ProviderAgentBase):
 
         text = await self._invoke(
             system_prompt, user_prompt, target, model, extra_tools,
-            mission_id=state.mission_id, task_id=task.id,
+            mission_id=state.mission_id, task_id=task.id, event_bus=event_bus,
         )
 
         self._write_output(state.mission_id, task, text)
@@ -303,20 +327,24 @@ class ClaudeCLIAgent(ProviderAgentBase):
         self, system_prompt: str, user_prompt: str, target: Path | None = None,
         model: str | None = None, extra_tools: list[str] | None = None,
         mission_id: str | None = None, task_id: str | None = None,
+        event_bus: EventBus | None = None,
     ) -> str:
-        import asyncio
-
         # Run the blocking subprocess in a thread so we don't stall the event
         # loop and stay portable across asyncio subprocess quirks on Windows.
-        return await asyncio.get_event_loop().run_in_executor(
+        # We grab the loop reference here (still on the event-loop thread) so
+        # the executor thread can hand tool-use events back to it via
+        # asyncio.run_coroutine_threadsafe — see _handle_stream_line below.
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
             None, self._invoke_blocking, system_prompt, user_prompt, target, model, extra_tools,
-            mission_id, task_id,
+            mission_id, task_id, event_bus, loop,
         )
 
     def _invoke_blocking(
         self, system_prompt: str, user_prompt: str, target: Path | None = None,
         model: str | None = None, extra_tools: list[str] | None = None,
         mission_id: str | None = None, task_id: str | None = None,
+        event_bus: EventBus | None = None, loop: "asyncio.AbstractEventLoop | None" = None,
     ) -> str:
         # The agent spec can be large; pass it as a file to avoid arg limits.
         spec_file = tempfile.NamedTemporaryFile(
@@ -333,110 +361,411 @@ class ClaudeCLIAgent(ProviderAgentBase):
             _check_project_dir_is_safe(target)
             home = cressida_home()
 
-            cmd = [
-                self._cli,
-                "-p",
-                "--output-format", "json",
-                "--model", model or self._model,
-                "--append-system-prompt-file", spec_file.name,
-                # Grant the two trees a mission spans. Without --add-dir the CLI
-                # refuses to read anything outside its cwd, and under -p there is
-                # nobody to approve the prompt, so the read is denied outright.
-                "--add-dir", str(home),
-                # Under -p, ANY tool use (edits, Bash, WebSearch, MCP tools like
-                # context7) requires approval that cannot be given non-interactively.
-                # acceptEdits pre-grants file edits (Edit/Write/NotebookEdit) only —
-                # everything else still needs an explicit allow. We deliberately do
-                # NOT use bypassPermissions: that skips every check with no boundary
-                # left at all. Instead we allow exactly what a mission needs to run
-                # end to end (web research + package installs/tests/git via Bash)
-                # and leave everything else (destructive commands, unlisted MCP
-                # tools, etc.) subject to normal denial under -p.
-                "--permission-mode", "acceptEdits",
-            ]
-            if target != home:
-                cmd.extend(["--add-dir", str(target)])
-            # --allowedTools is variadic (consumes args until the next `--flag`),
-            # so it must come last — anything appended after it risks being
-            # swallowed into the tool list instead of parsed as its own flag.
-            # extra_tools are this mission's BOND-approved additions on top of
-            # the static floor (see execute() above) — already passed through
-            # the keyword backstop before reaching here.
-            all_tools = list(_ALLOWED_TOOLS) + [t for t in (extra_tools or []) if t not in _ALLOWED_TOOLS]
-            cmd.extend(["--allowedTools", *all_tools])
+            # Primary path: stream-json + --verbose, which emits one JSON object
+            # per line as the agent works (assistant tool_use blocks, user
+            # tool_result blocks, and a final `type: "result"` line whose shape
+            # is identical to the single-blob `--output-format json` response).
+            # This lets us surface TOOL_USE_STARTED/COMPLETED live instead of
+            # only finding out what happened after the whole call returns.
+            cmd = self._build_cmd(spec_file.name, target, home, model, extra_tools, "stream-json")
 
             _logger.info(
-                "invoking Claude CLI: role=%s model=%s cwd=%s timeout=%ss cmd=%s",
+                "invoking Claude CLI (stream-json): role=%s model=%s cwd=%s timeout=%ss cmd=%s",
                 self.role.value, model or self._model, target, self._timeout, cmd,
             )
 
             try:
-                proc = subprocess.run(
-                    cmd,
-                    input=user_prompt,
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    timeout=self._timeout,
-                    # Run in the target project, not the Cressida install, so
-                    # relative work the agent does lands where the mission acts.
-                    cwd=str(target),
+                return self._invoke_streaming(
+                    cmd, user_prompt, target, mission_id, task_id, event_bus, loop,
                 )
-            except subprocess.TimeoutExpired as exc:
-                _logger.error(
-                    "Claude CLI timed out: role=%s timeout=%ss cmd=%s",
-                    self.role.value, self._timeout, cmd,
+            except _StreamParseFailure as exc:
+                # Our incremental parser came up empty despite the CLI exiting
+                # 0 — fall back to the original non-streaming invocation, which
+                # is what determines success/failure/output from here on. This
+                # is the safety net described in the hard constraint: streaming
+                # is a purely additive side channel, never the thing that can
+                # break a task.
+                _logger.warning(
+                    "stream-json parsing yielded no result for role=%s (%s); "
+                    "falling back to non-streaming --output-format json",
+                    self.role.value, exc,
                 )
-                raise RuntimeError(
-                    f"Claude CLI timed out after {self._timeout}s for role {self.role.value}."
-                ) from exc
-            except OSError as exc:
-                # Distinct from a nonzero exit: the process never started at all
-                # (binary missing, no exec permission, bad cwd, etc.), so there is
-                # no `proc`/returncode/stderr to inspect — the OSError itself is
-                # the only diagnostic signal, so it's logged before re-raising
-                # rather than falling through to the returncode check below.
-                _logger.error(
-                    "Claude CLI failed to spawn: role=%s cmd=%s error=%r",
-                    self.role.value, cmd, exc,
-                )
-                raise
-
-            # `proc.returncode` is captured and logged raw, with its Python type,
-            # before any formatting/interpretation — this is the value Python's
-            # own subprocess module handed back for the Windows process exit
-            # code, not something Cressida derives or transforms (grepping the
-            # whole package finds no bitmasking, ctypes, or struct pack/unpack
-            # touching returncode anywhere). If it ever again prints as
-            # 4294967295 (0xFFFFFFFF) instead of a small negative number, that
-            # value originates here, at the CPython/Windows boundary, not
-            # downstream in coordinator.py or mcp_server.py.
-            _logger.info(
-                "Claude CLI returned: role=%s returncode=%r type=%s stdout_len=%d stderr_len=%d",
-                self.role.value, proc.returncode, type(proc.returncode).__name__,
-                len(proc.stdout or ""), len(proc.stderr or ""),
-            )
-
-            if proc.returncode != 0:
-                log_path = self._write_failure_log(
-                    mission_id, task_id, cmd, proc.returncode, proc.stdout, proc.stderr,
-                )
-                _logger.error(
-                    "Claude CLI exited %r for role %s; full stdout/stderr written to %s",
-                    proc.returncode, self.role.value, log_path,
-                )
-                raise RuntimeError(
-                    f"Claude CLI exited {proc.returncode} for role {self.role.value}.\n"
-                    f"stderr: {(proc.stderr or '').strip()[:2000]}\n"
-                    f"Full log: {log_path}"
-                )
-
-            return self._parse_output(proc.stdout)
+                cmd_json = self._build_cmd(spec_file.name, target, home, model, extra_tools, "json")
+                return self._invoke_json_blocking(cmd_json, user_prompt, target, mission_id, task_id)
         finally:
             try:
                 os.unlink(spec_file.name)
             except OSError:
+                pass
+
+    def _build_cmd(
+        self, spec_file_name: str, target: Path, home: Path,
+        model: str | None, extra_tools: list[str] | None, output_format: str,
+    ) -> list[str]:
+        cmd = [
+            self._cli,
+            "-p",
+            "--output-format", output_format,
+            "--model", model or self._model,
+            "--append-system-prompt-file", spec_file_name,
+            # Grant the two trees a mission spans. Without --add-dir the CLI
+            # refuses to read anything outside its cwd, and under -p there is
+            # nobody to approve the prompt, so the read is denied outright.
+            "--add-dir", str(home),
+            # Under -p, ANY tool use (edits, Bash, WebSearch, MCP tools like
+            # context7) requires approval that cannot be given non-interactively.
+            # acceptEdits pre-grants file edits (Edit/Write/NotebookEdit) only —
+            # everything else still needs an explicit allow. We deliberately do
+            # NOT use bypassPermissions: that skips every check with no boundary
+            # left at all. Instead we allow exactly what a mission needs to run
+            # end to end (web research + package installs/tests/git via Bash)
+            # and leave everything else (destructive commands, unlisted MCP
+            # tools, etc.) subject to normal denial under -p.
+            "--permission-mode", "acceptEdits",
+        ]
+        if output_format == "stream-json":
+            # Required by the CLI for stream-json in print (-p) mode.
+            cmd.append("--verbose")
+        if target != home:
+            cmd.extend(["--add-dir", str(target)])
+        # --allowedTools is variadic (consumes args until the next `--flag`),
+        # so it must come last — anything appended after it risks being
+        # swallowed into the tool list instead of parsed as its own flag.
+        # extra_tools are this mission's BOND-approved additions on top of
+        # the static floor (see execute() above) — already passed through
+        # the keyword backstop before reaching here.
+        all_tools = list(_ALLOWED_TOOLS) + [t for t in (extra_tools or []) if t not in _ALLOWED_TOOLS]
+        cmd.extend(["--allowedTools", *all_tools])
+        return cmd
+
+    # ── Non-streaming fallback (the original, pre-observability code path) ──
+
+    def _invoke_json_blocking(
+        self, cmd: list[str], user_prompt: str, target: Path,
+        mission_id: str | None, task_id: str | None,
+    ) -> str:
+        """The original blocking `subprocess.run` + single-blob JSON parse.
+
+        This is the exact behavior Cressida shipped before streaming
+        observability existed. It is used directly whenever the CLI/model is
+        invoked without a streaming attempt available, and as the fallback
+        target if streaming's incremental parser fails to produce a usable
+        result (see _StreamParseFailure above) — in both cases this function,
+        not the streaming path, is what determines success/failure/output.
+        """
+        try:
+            proc = subprocess.run(
+                cmd,
+                input=user_prompt,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=self._timeout,
+                # Run in the target project, not the Cressida install, so
+                # relative work the agent does lands where the mission acts.
+                cwd=str(target),
+            )
+        except subprocess.TimeoutExpired as exc:
+            _logger.error(
+                "Claude CLI timed out: role=%s timeout=%ss cmd=%s",
+                self.role.value, self._timeout, cmd,
+            )
+            raise RuntimeError(
+                f"Claude CLI timed out after {self._timeout}s for role {self.role.value}."
+            ) from exc
+        except OSError as exc:
+            # Distinct from a nonzero exit: the process never started at all
+            # (binary missing, no exec permission, bad cwd, etc.), so there is
+            # no `proc`/returncode/stderr to inspect — the OSError itself is
+            # the only diagnostic signal, so it's logged before re-raising
+            # rather than falling through to the returncode check below.
+            _logger.error(
+                "Claude CLI failed to spawn: role=%s cmd=%s error=%r",
+                self.role.value, cmd, exc,
+            )
+            raise
+
+        # `proc.returncode` is captured and logged raw, with its Python type,
+        # before any formatting/interpretation — this is the value Python's
+        # own subprocess module handed back for the Windows process exit
+        # code, not something Cressida derives or transforms (grepping the
+        # whole package finds no bitmasking, ctypes, or struct pack/unpack
+        # touching returncode anywhere). If it ever again prints as
+        # 4294967295 (0xFFFFFFFF) instead of a small negative number, that
+        # value originates here, at the CPython/Windows boundary, not
+        # downstream in coordinator.py or mcp_server.py.
+        _logger.info(
+            "Claude CLI returned: role=%s returncode=%r type=%s stdout_len=%d stderr_len=%d",
+            self.role.value, proc.returncode, type(proc.returncode).__name__,
+            len(proc.stdout or ""), len(proc.stderr or ""),
+        )
+
+        if proc.returncode != 0:
+            log_path = self._write_failure_log(
+                mission_id, task_id, cmd, proc.returncode, proc.stdout, proc.stderr,
+            )
+            _logger.error(
+                "Claude CLI exited %r for role %s; full stdout/stderr written to %s",
+                proc.returncode, self.role.value, log_path,
+            )
+            raise RuntimeError(
+                f"Claude CLI exited {proc.returncode} for role {self.role.value}.\n"
+                f"stderr: {(proc.stderr or '').strip()[:2000]}\n"
+                f"Full log: {log_path}"
+            )
+
+        return self._parse_output(proc.stdout)
+
+    # ── Streaming path (additive observability; falls back on any anomaly) ──
+
+    def _invoke_streaming(
+        self, cmd: list[str], user_prompt: str, target: Path,
+        mission_id: str | None, task_id: str | None,
+        event_bus: EventBus | None, loop: "asyncio.AbstractEventLoop | None",
+    ) -> str:
+        """Run the stream-json CLI invocation, emitting TOOL_USE_STARTED /
+        TOOL_USE_COMPLETED as lines arrive, and return the final result text
+        extracted from the terminal `type: "result"` line — using the exact
+        same field extraction as the non-streaming `--output-format json`
+        path (`_extract_result_text`), so the two paths agree byte-for-byte
+        on equivalent underlying content.
+
+        Failure/timeout handling mirrors `_invoke_json_blocking` exactly
+        (same log messages, same RuntimeError text, same failure-log
+        machinery) so a real CLI failure looks identical to a caller
+        regardless of which path produced it. Only the "CLI succeeded but we
+        never saw a parseable result line" case is special-cased via
+        _StreamParseFailure, which the caller (_invoke_blocking) catches and
+        turns into a full non-streaming retry.
+        """
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                cwd=str(target),
+            )
+        except OSError as exc:
+            _logger.error(
+                "Claude CLI failed to spawn: role=%s cmd=%s error=%r",
+                self.role.value, cmd, exc,
+            )
+            raise
+
+        # stdin/stdout/stderr are all handled on background threads so a large
+        # prompt being written can't deadlock against stdout/stderr pipe
+        # buffers filling up (the classic Popen gotcha that subprocess.run's
+        # communicate() exists to avoid) — and so we can enforce a timeout
+        # across a blocking readline() the way subprocess.run's own `timeout`
+        # kwarg does.
+        stdout_q: "queue.Queue[str | None]" = queue.Queue()
+        stderr_chunks: list[str] = []
+
+        def _feed_stdin() -> None:
+            try:
+                assert proc.stdin is not None
+                proc.stdin.write(user_prompt)
+            except Exception:
+                pass
+            finally:
+                try:
+                    assert proc.stdin is not None
+                    proc.stdin.close()
+                except Exception:
+                    pass
+
+        def _read_stdout() -> None:
+            try:
+                assert proc.stdout is not None
+                for line in proc.stdout:
+                    stdout_q.put(line)
+            except Exception:
+                pass
+            finally:
+                stdout_q.put(None)  # sentinel: EOF
+
+        def _read_stderr() -> None:
+            try:
+                assert proc.stderr is not None
+                for line in proc.stderr:
+                    stderr_chunks.append(line)
+            except Exception:
+                pass
+
+        threading.Thread(target=_feed_stdin, daemon=True).start()
+        stdout_thread = threading.Thread(target=_read_stdout, daemon=True)
+        stdout_thread.start()
+        stderr_thread = threading.Thread(target=_read_stderr, daemon=True)
+        stderr_thread.start()
+
+        tool_names: dict[str, str] = {}
+        result_obj: dict | None = None
+        stdout_lines: list[str] = []
+        start = time.monotonic()
+        timed_out = False
+
+        while True:
+            remaining = self._timeout - (time.monotonic() - start)
+            if remaining <= 0:
+                timed_out = True
+                break
+            try:
+                line = stdout_q.get(timeout=min(remaining, 1.0))
+            except queue.Empty:
+                continue
+            if line is None:
+                break
+            stdout_lines.append(line)
+            stripped = line.strip()
+            if not stripped:
+                continue
+            # Each line is parsed defensively: a malformed or unexpected line
+            # must never break the read loop or affect the eventual result —
+            # it's simply skipped for observability purposes. The final
+            # result still comes only from a well-formed `type: "result"` line.
+            try:
+                data = json.loads(stripped)
+            except Exception:
+                continue
+            try:
+                self._handle_stream_line(data, tool_names, event_bus, loop, mission_id, task_id)
+            except Exception:
+                pass
+            if isinstance(data, dict) and data.get("type") == "result":
+                result_obj = data
+
+        if timed_out:
+            proc.kill()
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                pass
+            stdout_thread.join(timeout=2)
+            stderr_thread.join(timeout=2)
+            _logger.error(
+                "Claude CLI timed out: role=%s timeout=%ss cmd=%s",
+                self.role.value, self._timeout, cmd,
+            )
+            raise RuntimeError(
+                f"Claude CLI timed out after {self._timeout}s for role {self.role.value}."
+            )
+
+        try:
+            returncode = proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                pass
+            _logger.error(
+                "Claude CLI timed out: role=%s timeout=%ss cmd=%s",
+                self.role.value, self._timeout, cmd,
+            )
+            raise RuntimeError(
+                f"Claude CLI timed out after {self._timeout}s for role {self.role.value}."
+            )
+        stdout_thread.join(timeout=5)
+        stderr_thread.join(timeout=5)
+
+        stdout_text = "".join(stdout_lines)
+        stderr_text = "".join(stderr_chunks)
+
+        _logger.info(
+            "Claude CLI returned: role=%s returncode=%r type=%s stdout_len=%d stderr_len=%d",
+            self.role.value, returncode, type(returncode).__name__,
+            len(stdout_text), len(stderr_text),
+        )
+
+        if returncode != 0:
+            log_path = self._write_failure_log(
+                mission_id, task_id, cmd, returncode, stdout_text, stderr_text,
+            )
+            _logger.error(
+                "Claude CLI exited %r for role %s; full stdout/stderr written to %s",
+                returncode, self.role.value, log_path,
+            )
+            raise RuntimeError(
+                f"Claude CLI exited {returncode} for role {self.role.value}.\n"
+                f"stderr: {stderr_text.strip()[:2000]}\n"
+                f"Full log: {log_path}"
+            )
+
+        if result_obj is None:
+            raise _StreamParseFailure(
+                "no `type: \"result\"` line found in stream-json output despite exit code 0"
+            )
+
+        return self._extract_result_text(result_obj)
+
+    def _handle_stream_line(
+        self, data: Any, tool_names: dict[str, str],
+        event_bus: EventBus | None, loop: "asyncio.AbstractEventLoop | None",
+        mission_id: str | None, task_id: str | None,
+    ) -> None:
+        """Look for tool_use/tool_result content blocks in one parsed
+        stream-json line and fire the corresponding observability event.
+
+        Runs on the executor thread (see _invoke), not the event loop thread,
+        so events are handed off via asyncio.run_coroutine_threadsafe rather
+        than awaited directly. Every step here is best-effort: an exception
+        anywhere in this function must never propagate back into the read
+        loop (the caller also wraps calls to this in try/except, belt and
+        suspenders) since it sits entirely outside the CLI's actual
+        success/failure/output determination.
+        """
+        if event_bus is None or loop is None or not isinstance(data, dict):
+            return
+        msg_type = data.get("type")
+        if msg_type == "assistant":
+            content = ((data.get("message") or {}).get("content")) or []
+            if not isinstance(content, list):
+                return
+            for block in content:
+                if not isinstance(block, dict) or block.get("type") != "tool_use":
+                    continue
+                tool_id = block.get("id")
+                name = block.get("name") or "unknown"
+                if tool_id:
+                    tool_names[tool_id] = name
+                self._fire(loop, self._emit_tool_started(
+                    event_bus, mission_id or "", task_id or "", name, block.get("input"),
+                ))
+        elif msg_type == "user":
+            content = ((data.get("message") or {}).get("content")) or []
+            if not isinstance(content, list):
+                return
+            for block in content:
+                if not isinstance(block, dict) or block.get("type") != "tool_result":
+                    continue
+                tool_id = block.get("tool_use_id")
+                name = tool_names.get(tool_id, "unknown") if tool_id else "unknown"
+                is_error = bool(block.get("is_error"))
+                self._fire(loop, self._emit_tool_completed(
+                    event_bus, mission_id or "", task_id or "", name, block.get("content"), is_error,
+                ))
+
+    @staticmethod
+    def _fire(loop: "asyncio.AbstractEventLoop", coro: Any) -> None:
+        """Best-effort hand-off of an emit coroutine from a worker thread back
+        to the event loop. Fire-and-forget: we don't wait on the resulting
+        future, since blocking the read loop on event delivery would slow
+        down (and could theoretically stall) the actual CLI interaction this
+        is supposed to be a side observation of. `_emit_tool_started`/
+        `_emit_tool_completed` never raise by construction, so the only
+        failure mode here is the hand-off itself (e.g. the loop is closed),
+        which is swallowed."""
+        try:
+            asyncio.run_coroutine_threadsafe(coro, loop)
+        except Exception:
+            try:
+                coro.close()
+            except Exception:
                 pass
 
     @staticmethod
@@ -477,6 +806,29 @@ class ClaudeCLIAgent(ProviderAgentBase):
             return "(failed to write log file)"
 
     @staticmethod
+    def _extract_result_text(data: dict) -> str:
+        """Shared final-result extraction for a parsed CLI result object.
+
+        Used by both `_parse_output` (the single-blob `--output-format json`
+        shape) and `_invoke_streaming` (the last `type: "result"` line of
+        `--output-format stream-json`) — real testing against the installed
+        CLI (2.1.225) confirmed both shapes carry identical fields
+        (`is_error`, `result`, ...), so routing both through this one
+        function guarantees the two invocation paths agree on output for
+        equivalent underlying content, per the hard "must not change the
+        final result" constraint.
+        """
+        if data.get("is_error"):
+            raise RuntimeError(
+                f"Claude CLI reported an error: {data.get('result') or data}"
+            )
+        result = data.get("result")
+        if isinstance(result, str):
+            return result
+        # Some versions nest the text differently; fall back to the blob.
+        return json.dumps(data)
+
+    @staticmethod
     def _parse_output(stdout: str) -> str:
         """Extract the final assistant text from `--output-format json` stdout."""
         raw = (stdout or "").strip()
@@ -489,13 +841,5 @@ class ClaudeCLIAgent(ProviderAgentBase):
             return raw
 
         if isinstance(data, dict):
-            if data.get("is_error"):
-                raise RuntimeError(
-                    f"Claude CLI reported an error: {data.get('result') or data}"
-                )
-            result = data.get("result")
-            if isinstance(result, str):
-                return result
-            # Some versions nest the text differently; fall back to the blob.
-            return json.dumps(data)
+            return ClaudeCLIAgent._extract_result_text(data)
         return raw

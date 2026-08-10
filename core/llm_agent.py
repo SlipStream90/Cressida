@@ -10,6 +10,7 @@ try:
 except ImportError:
     _ANTHROPIC_AVAILABLE = False
 
+from cressida.core.events import EventBus, EventType, publish_safe
 from cressida.core.interfaces import Agent
 from cressida.core import AgentRole, MissionState, Task
 from cressida.core.model_tiers import ROLE_MODEL as _ROLE_MODEL, DEFAULT_MODEL as _DEFAULT_MODEL
@@ -23,6 +24,21 @@ _MAX_TOOL_ROUNDS = 40  # safety cap on the agentic loop
 
 class LLMAgentError(Exception):
     pass
+
+
+def _preview(value: Any, limit: int = 300) -> str:
+    """Best-effort short string preview of a tool input/output for the live
+    log — for a human glancing at `cressida watch`, not a faithful
+    serialization, so anything unstringifiable becomes a placeholder rather
+    than raising (this must never be the thing that breaks a task)."""
+    try:
+        text = value if isinstance(value, str) else json.dumps(value, default=str)
+    except Exception:
+        try:
+            text = repr(value)
+        except Exception:
+            return "<unprintable>"
+    return text[:limit]
 
 
 class LLMAgent(Agent):
@@ -80,8 +96,15 @@ class LLMAgent(Agent):
 
     # ── Core execution ───────────────────────────────────────────────────────
 
-    async def execute(self, state: MissionState, task: Task) -> Any:
-        """Run the agentic tool loop and return the final text output."""
+    async def execute(self, state: MissionState, task: Task, event_bus: EventBus | None = None) -> Any:
+        """Run the agentic tool loop and return the final text output.
+
+        ``event_bus``, when given, is used to publish TOOL_USE_STARTED/
+        COMPLETED around each tool call below for live observability
+        (`cressida watch`) — purely additive: publish_safe never raises, and
+        no existing control flow (the loop, its return values, error
+        propagation) is touched by these calls.
+        """
         system_prompt = self._load_spec()
         user_prompt = self._context_builder.build_prompt(
             task_id=task.id,
@@ -130,8 +153,27 @@ class LLMAgent(Agent):
                 for block in assistant_content:
                     if block.type != "tool_use":
                         continue
-                    # PhaseRejectedError / PhaseEscalatedError propagate up intentionally
+                    await publish_safe(
+                        event_bus, EventType.TOOL_USE_STARTED,
+                        {
+                            "mission_id": state.mission_id, "task_id": task.id, "agent": self.role.value,
+                            "tool_name": block.name, "tool_input": _preview(block.input),
+                        },
+                        source=self.role,
+                    )
+                    # PhaseRejectedError / PhaseEscalatedError propagate up intentionally —
+                    # the observability call above already fired and is not undone; a
+                    # TOOL_USE_COMPLETED for this call simply never arrives, which a live
+                    # viewer reads correctly as "started, then the task ended".
                     output = execute_tool(block.name, block.input, mission_id=state.mission_id)
+                    await publish_safe(
+                        event_bus, EventType.TOOL_USE_COMPLETED,
+                        {
+                            "mission_id": state.mission_id, "task_id": task.id, "agent": self.role.value,
+                            "tool_name": block.name, "result_preview": _preview(output), "is_error": False,
+                        },
+                        source=self.role,
+                    )
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": block.id,

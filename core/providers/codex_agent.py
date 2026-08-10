@@ -33,6 +33,7 @@ from typing import Any
 
 from cressida.core import AgentRole, MissionState, Task
 from cressida.core.paths import cressida_home, project_dir
+from cressida.core.events import EventBus
 from cressida.core.providers.base import ProviderAgentBase
 
 
@@ -106,7 +107,7 @@ class CodexAgent(ProviderAgentBase):
         self._model = model or os.environ.get("CRESSIDA_CODEX_MODEL") or ""
         self._timeout = timeout
 
-    async def execute(self, state: MissionState, task: Task) -> Any:
+    async def execute(self, state: MissionState, task: Task, event_bus: EventBus | None = None) -> Any:
         system_prompt = self._load_spec()
         user_prompt = self._build_user_prompt(state, task)
         full_prompt = f"[Agent Spec: {self.role.value}]\n\n{system_prompt}\n\n---\n\n[Task]\n\n{user_prompt}"

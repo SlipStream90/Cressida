@@ -14,7 +14,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command")
 
-    _PROVIDER_HELP = "LLM provider: auto | anthropic | openai | gemini | groq | ollama | claude_cli | opencode | codex (default: auto)"
+    _PROVIDER_HELP = (
+        "LLM provider: auto | gateway | anthropic | openai | gemini | groq | ollama | "
+        "claude_cli | opencode | codex | kilocode (default: auto). 'gateway' auto-selects the best "
+        "available provider per agent role instead of one provider for the whole mission "
+        "(see core/providers/gateway.py)."
+    )
 
     run_parser = subparsers.add_parser("run", help="Run a mission")
     run_parser.add_argument("brief", type=str, help="Mission brief file or inline string")

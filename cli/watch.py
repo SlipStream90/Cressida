@@ -177,6 +177,17 @@ def _describe_event(record: dict[str, Any]) -> str:
         return f"MISSION FAILED: {data.get('reason', '')}"
     if event_type == "mission_spawned":
         return f"sub-mission spawned: {data.get('child_mission_id', '?')}"
+    if event_type == "tool_use_started":
+        return (
+            f"  -> {data.get('agent', '?')} calling {data.get('tool_name', '?')}"
+            f"({str(data.get('tool_input', ''))[:80]})"
+        )
+    if event_type == "tool_use_completed":
+        marker = "FAILED" if data.get("is_error") else "ok"
+        return (
+            f"  <- {data.get('tool_name', '?')} {marker}: "
+            f"{str(data.get('result_preview', ''))[:80]}"
+        )
     return f"{event_type}: {json.dumps(data, default=str)[:60]}"
 
 
@@ -202,7 +213,13 @@ def _render_frame(
     if mission_ended:
         status = "mission has ended (see last event below)"
     elif in_progress:
-        parts = [f"{tid} (agent={info.get('agent', '?')})" for tid, info in in_progress.items()]
+        parts = []
+        for tid, info in in_progress.items():
+            piece = f"{tid} (agent={info.get('agent', '?')})"
+            current_tool = info.get("current_tool")
+            if current_tool:
+                piece += f" -> {current_tool}"
+            parts.append(piece)
         status = "in progress: " + ", ".join(parts)
     else:
         status = "idle / between tasks"
@@ -267,6 +284,14 @@ def watch_mission(
         task_id = data.get("task_id")
         if event_type == "task_started" and task_id:
             in_progress[task_id] = data
+        elif event_type == "tool_use_started" and task_id and task_id in in_progress:
+            # Tags the in-progress task's entry with what it's doing *right
+            # now*, without discarding the task_started data it already
+            # carries (agent name, etc.) — this is what makes the status
+            # line show "BRANCH -> Edit(...)" instead of just "BRANCH".
+            in_progress[task_id] = {**in_progress[task_id], "current_tool": data.get("tool_name")}
+        elif event_type == "tool_use_completed" and task_id and task_id in in_progress:
+            in_progress[task_id] = {**in_progress[task_id], "current_tool": None}
         elif event_type in _TASK_CLOSING_TYPES and task_id:
             in_progress.pop(task_id, None)
         elif event_type in _MISSION_END_TYPES:

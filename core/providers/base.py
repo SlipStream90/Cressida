@@ -12,10 +12,12 @@ All provider agents implement:
   get_capabilities() -> list[str]  (shared, from TASK_TYPE_ROUTE)
 """
 
+import json
 from abc import abstractmethod
 from pathlib import Path
 from typing import Any
 
+from cressida.core.events import EventBus, EventType, publish_safe
 from cressida.core.interfaces import Agent
 from cressida.core import AgentRole, MissionState, Task
 from cressida.core.paths import mission_dir, project_dir, resolve_under_home
@@ -99,8 +101,58 @@ class ProviderAgentBase(Agent):
         from cressida.orchestration.router import TASK_TYPE_ROUTE
         return [k for k, v in TASK_TYPE_ROUTE.items() if v == self.role]
 
+    # ── Intra-task observability (optional, purely additive) ───────────────────
+
+    async def _emit_tool_started(
+        self, event_bus: EventBus | None, mission_id: str, task_id: str, tool_name: str, tool_input: Any = None,
+    ) -> None:
+        """Publish TOOL_USE_STARTED. Never raises — see publish_safe's docstring.
+
+        ``tool_input`` is truncated/stringified defensively since it can be
+        arbitrary provider-specific structure (a CLI's parsed JSON tool-call
+        args, an SDK's typed object, ...) and this must never fail to publish
+        just because some input didn't serialize cleanly.
+        """
+        await publish_safe(
+            event_bus, EventType.TOOL_USE_STARTED,
+            {
+                "mission_id": mission_id, "task_id": task_id, "agent": self.role.value,
+                "tool_name": tool_name, "tool_input": _safe_preview(tool_input),
+            },
+            source=self.role,
+        )
+
+    async def _emit_tool_completed(
+        self, event_bus: EventBus | None, mission_id: str, task_id: str, tool_name: str,
+        result: Any = None, is_error: bool = False,
+    ) -> None:
+        """Publish TOOL_USE_COMPLETED. Never raises — see publish_safe's docstring."""
+        await publish_safe(
+            event_bus, EventType.TOOL_USE_COMPLETED,
+            {
+                "mission_id": mission_id, "task_id": task_id, "agent": self.role.value,
+                "tool_name": tool_name, "result_preview": _safe_preview(result), "is_error": is_error,
+            },
+            source=self.role,
+        )
+
     # ── Abstract ──────────────────────────────────────────────────────────────
 
     @abstractmethod
-    async def execute(self, state: MissionState, task: Task) -> Any:
+    async def execute(self, state: MissionState, task: Task, event_bus: EventBus | None = None) -> Any:
         ...
+
+
+def _safe_preview(value: Any, limit: int = 300) -> str:
+    """Best-effort short string preview of a tool input/output for the live
+    log — this is for a human glancing at `cressida watch`, not a faithful
+    serialization, so any value that can't be stringified cleanly just
+    becomes "<unprintable>" rather than raising."""
+    try:
+        text = value if isinstance(value, str) else json.dumps(value, default=str)
+    except Exception:
+        try:
+            text = repr(value)
+        except Exception:
+            return "<unprintable>"
+    return text[:limit]

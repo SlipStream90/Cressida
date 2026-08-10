@@ -34,6 +34,7 @@ except ImportError:
 from cressida.core import AgentRole, MissionState, Task
 from cressida.core.tools.definitions import get_tools_for_role
 from cressida.core.tools.implementations import execute_tool
+from cressida.core.events import EventBus
 from cressida.core.providers.base import ProviderAgentBase, _MAX_TOOL_ROUNDS
 from cressida.core.providers.tool_adapters import to_gemini_declarations
 
@@ -127,7 +128,7 @@ class GeminiAgent(ProviderAgentBase):
 
     # ── Agentic loop ──────────────────────────────────────────────────────────
 
-    async def execute(self, state: MissionState, task: Task) -> Any:
+    async def execute(self, state: MissionState, task: Task, event_bus: EventBus | None = None) -> Any:
         system_prompt = self._load_spec()
         user_prompt = self._build_user_prompt(state, task)
 
@@ -155,8 +156,13 @@ class GeminiAgent(ProviderAgentBase):
             for fn_call in fn_calls:
                 fn_name = fn_call.name
                 fn_args = dict(fn_call.args) if fn_call.args else {}
-                # PhaseRejectedError / PhaseEscalatedError propagate intentionally
+                await self._emit_tool_started(event_bus, state.mission_id, task.id, fn_name, fn_args)
+                # PhaseRejectedError / PhaseEscalatedError propagate intentionally —
+                # the TOOL_USE_STARTED above already fired and is not undone; a
+                # TOOL_USE_COMPLETED for this call simply never arrives, which a
+                # live viewer reads correctly as "started, then the task ended".
                 result = execute_tool(fn_name, fn_args, mission_id=state.mission_id)
+                await self._emit_tool_completed(event_bus, state.mission_id, task.id, fn_name, result, is_error=False)
                 tool_parts.append(
                     gtypes.Part(
                         function_response=gtypes.FunctionResponse(

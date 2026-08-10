@@ -10,12 +10,15 @@ Priority order (first match wins):
   5. GROQ_API_KEY     + openai   package installed (Groq uses OpenAI-compat)
   6. `claude` CLI installed on PATH (no API key — uses the CLI's own login)
   7. `opencode` CLI installed on PATH (no API key — uses OpenCode's auth)
-  8. Ollama server reachable at localhost:11434 (no API key needed)
+  8. `codex` CLI installed on PATH (no API key — uses Codex's own login)
+  9. `kilo`/`kilocode` CLI installed on PATH (no API key — uses Kilo's own auth)
+  10. Ollama server reachable at localhost:11434 (no API key needed)
 
 The CRESSIDA_PROVIDER env var (or --provider CLI flag) accepts:
-  anthropic | openai | gemini | groq | ollama | claude_cli | opencode | codex
+  anthropic | openai | gemini | groq | ollama | claude_cli | opencode | codex | kilocode
   (claude_cli also accepts the aliases: claude-cli, cli, claude)
   (opencode also accepts the alias: oc)
+  (kilocode also accepts the alias: kilo)
 """
 
 import os
@@ -36,6 +39,7 @@ PROVIDER_OLLAMA     = "ollama"
 PROVIDER_CLAUDE_CLI = "claude_cli"
 PROVIDER_OPENCODE   = "opencode"
 PROVIDER_CODEX      = "codex"
+PROVIDER_KILOCODE   = "kilocode"
 
 _ALL_PROVIDERS = (
     PROVIDER_ANTHROPIC,
@@ -46,6 +50,7 @@ _ALL_PROVIDERS = (
     PROVIDER_CLAUDE_CLI,
     PROVIDER_OPENCODE,
     PROVIDER_CODEX,
+    PROVIDER_KILOCODE,
 )
 
 # Accepted aliases for the Claude CLI provider (normalised in detect_provider).
@@ -56,6 +61,9 @@ _OPENCODE_ALIASES = {"opencode", "oc"}
 
 # Accepted aliases for the Codex provider.
 _CODEX_ALIASES = {"codex", "openai_codex", "codex_cli"}
+
+# Accepted aliases for the Kilo Code provider.
+_KILOCODE_ALIASES = {"kilocode", "kilo", "kilo-code", "kilo_code"}
 
 
 def detect_provider() -> str:
@@ -73,6 +81,8 @@ def detect_provider() -> str:
             return PROVIDER_OPENCODE
         if explicit in _CODEX_ALIASES:
             return PROVIDER_CODEX
+        if explicit in _KILOCODE_ALIASES:
+            return PROVIDER_KILOCODE
         if explicit not in _ALL_PROVIDERS:
             raise ValueError(
                 f"Unknown CRESSIDA_PROVIDER={explicit!r}. "
@@ -105,9 +115,13 @@ def detect_provider() -> str:
     if _opencode_available():
         return PROVIDER_OPENCODE
 
-    # Codex CLI (no API key — uses Codex's own login). Preferred over Ollama.
+    # Codex CLI (no API key — uses Codex's own login). Preferred over Kilo Code/Ollama.
     if _codex_available():
         return PROVIDER_CODEX
+
+    # Kilo Code CLI (no API key — uses Kilo's own login). Preferred over Ollama.
+    if _kilocode_available():
+        return PROVIDER_KILOCODE
 
     # Ollama (local, no API key, no Python SDK needed)
     if _ollama_reachable():
@@ -122,10 +136,51 @@ def detect_provider() -> str:
         "  Or install the Claude CLI (https://claude.com/claude-code) — no API key needed.\n"
         "  Or install OpenCode (https://opencode.ai) — no API key needed.\n"
         "  Or install the Codex CLI — no API key needed.\n"
+        "  Or install the Kilo Code CLI (npm install -g @kilocode/cli) — no API key needed.\n"
         "  Or start Ollama locally (https://ollama.com) — no API key needed.\n"
         "  Or set CRESSIDA_PROVIDER explicitly to one of: "
         + ", ".join(_ALL_PROVIDERS)
     )
+
+
+def detect_available_providers() -> list[str]:
+    """Return every provider that's actually usable right now, not just the
+    first match `detect_provider()` would pick.
+
+    Built for gateway routing (core/providers/gateway.py): picking a good
+    provider *per role* needs to know the full set of options, not just
+    whichever one wins the fixed priority order below. Reuses the exact same
+    probes `detect_provider()` uses, so "available" means the identical thing
+    in both places — no second, drifting definition of availability.
+
+    Respects `CRESSIDA_PROVIDER` the same way `detect_provider()` does: if
+    it's set, that's the only available provider (an explicit override should
+    still mean "use exactly this", even under gateway routing).
+    """
+    explicit = os.environ.get("CRESSIDA_PROVIDER", "").strip().lower()
+    if explicit:
+        return [detect_provider()]  # normalizes aliases / validates, single-element result
+
+    available: list[str] = []
+    if os.environ.get("ANTHROPIC_API_KEY") and _pkg("anthropic"):
+        available.append(PROVIDER_ANTHROPIC)
+    if os.environ.get("OPENAI_API_KEY") and _pkg("openai"):
+        available.append(PROVIDER_OPENAI)
+    if (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")) and _pkg("google.genai"):
+        available.append(PROVIDER_GEMINI)
+    if os.environ.get("GROQ_API_KEY") and _pkg("openai"):
+        available.append(PROVIDER_GROQ)
+    if _claude_cli_available():
+        available.append(PROVIDER_CLAUDE_CLI)
+    if _opencode_available():
+        available.append(PROVIDER_OPENCODE)
+    if _codex_available():
+        available.append(PROVIDER_CODEX)
+    if _kilocode_available():
+        available.append(PROVIDER_KILOCODE)
+    if _ollama_reachable():
+        available.append(PROVIDER_OLLAMA)
+    return available
 
 
 def create_agent(
@@ -146,6 +201,8 @@ def create_agent(
         provider = PROVIDER_OPENCODE
     if provider in _CODEX_ALIASES:
         provider = PROVIDER_CODEX
+    if provider in _KILOCODE_ALIASES:
+        provider = PROVIDER_KILOCODE
 
     if provider == PROVIDER_ANTHROPIC:
         from cressida.core.llm_agent import LLMAgent
@@ -197,6 +254,16 @@ def create_agent(
     if provider == PROVIDER_CODEX:
         from cressida.core.providers.codex_agent import CodexAgent
         return CodexAgent(
+            role=role,
+            agents_dir=agents_dir,
+            cressida_root=cressida_root,
+            max_tokens=max_tokens,
+            timeout=timeout if timeout > 0 else None,
+        )
+
+    if provider == PROVIDER_KILOCODE:
+        from cressida.core.providers.kilocode_agent import KiloCodeAgent
+        return KiloCodeAgent(
             role=role,
             agents_dir=agents_dir,
             cressida_root=cressida_root,
@@ -263,3 +330,9 @@ def _codex_available() -> bool:
     """Return True if the `codex` CLI binary is installed and locatable."""
     from cressida.core.providers.codex_agent import codex_cli_path
     return codex_cli_path() is not None
+
+
+def _kilocode_available() -> bool:
+    """Return True if the `kilo`/`kilocode` CLI binary is installed and locatable."""
+    from cressida.core.providers.kilocode_agent import kilocode_cli_path
+    return kilocode_cli_path() is not None
