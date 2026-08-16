@@ -471,7 +471,7 @@ def mission_status(mission_id: str) -> str:
         if not mpath.exists():
             return f"Mission {mission_id!r} not found. Available missions:\n" + "\n".join(
                 d.name for d in _missions_dir().iterdir()
-                if d.is_dir() and d.name not in ("inbox", "scheduled", "processed")
+                if d.is_dir() and d.name not in ("inbox", "scheduled", "processed", "_archive")
             ) or "(none)"
 
         # Mission exists but no execution_state.json yet — report what we have
@@ -532,7 +532,7 @@ def list_missions() -> str:
     mdir = _missions_dir()
     missions = []
     for d in sorted(mdir.iterdir(), reverse=True):
-        if not d.is_dir() or d.name in ("inbox", "scheduled", "processed"):
+        if not d.is_dir() or d.name in ("inbox", "scheduled", "processed", "_archive"):
             continue
         state = _load_execution_state(d.name)
         tasks = state.get("tasks", {})
@@ -645,7 +645,7 @@ def cressida_status() -> str:
     mdir = _missions_dir()
     missions = []
     for d in sorted(mdir.iterdir(), reverse=True):
-        if not d.is_dir() or d.name in ("inbox", "scheduled", "processed"):
+        if not d.is_dir() or d.name in ("inbox", "scheduled", "processed", "_archive"):
             continue
         state = _load_execution_state(d.name)
         tasks = state.get("tasks", {})

@@ -204,7 +204,7 @@ def list_mission_ids() -> list[str]:
         return []
     return sorted(
         (d.name for d in mdir.iterdir()
-         if d.is_dir() and d.name not in ("inbox", "scheduled", "processed")),
+         if d.is_dir() and d.name not in ("inbox", "scheduled", "processed", "_archive")),
         reverse=True,
     )
 

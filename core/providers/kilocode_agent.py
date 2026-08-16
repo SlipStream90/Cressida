@@ -244,7 +244,6 @@ class KiloCodeAgent(ProviderAgentBase):
         )
         try:
             stdout, stderr = proc.communicate(input=prompt, timeout=self._timeout)
-            result = subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
         except subprocess.TimeoutExpired as exc:
             # `kilo` installs on Windows as `kilo.cmd` (cmd.exe -> node.exe).
             # `subprocess.run` only kills the direct child (cmd.exe) on timeout,
@@ -271,11 +270,11 @@ class KiloCodeAgent(ProviderAgentBase):
         if proc.returncode != 0:
             raise RuntimeError(
                 f"Kilo Code CLI exited {proc.returncode} for role {self.role.value}.\n"
-                f"stderr: {(proc.stderr or '').strip()[:2000]}\n"
-                f"stdout: {(proc.stdout or '').strip()[:2000]}"
+                f"stderr: {(stderr or '').strip()[:2000]}\n"
+                f"stdout: {(stdout or '').strip()[:2000]}"
             )
 
-        return self._parse_output(proc.stdout)
+        return self._parse_output(stdout)
 
     @staticmethod
     def _parse_output(stdout: str) -> tuple[str, list[dict[str, Any]]]:
