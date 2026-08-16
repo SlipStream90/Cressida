@@ -351,6 +351,10 @@ CRESSIDA automatically detects whichever provider you already use — no configu
 
 The four CLI providers each run their own real agentic tool-use loop per task (not a single-shot completion) — Cressida shells out to `claude -p` / `opencode run` / `codex exec` / `kilo run` non-interactively and reads back the final result.
 
+### Invoker binding (`provider="auto"`)
+
+A mission started from a CLI runs *on* that CLI. The auto-invoke skills pass `invoker` to `run_mission` (`claude_cli`, `opencode`, `kilocode`, `codex`), so calling Cressida from Claude Code drives its agents through `claude`, and calling it from opencode uses opencode — the tool you are already authenticated in, rather than whatever availability detection ranks first. Anything launched from a shell can set `CRESSIDA_INVOKER` for the same effect. An explicit `--provider` always wins, and an unknown invoker falls back to detection.
+
 ### Gateway routing (`--provider gateway`)
 
 Instead of picking one provider for the whole mission, `--provider gateway` probes every provider you have available (API keys set, CLIs on PATH) and chooses a different one **per agent role**, based on how demanding that role's tier is — strategic/planning roles get routed to the strongest available provider, fast one-shot classification roles get routed to the quickest one, and everything else falls in between. It never invents a provider outside what's actually available on your machine, and if nothing is available it fails with the same error `--provider auto` would.

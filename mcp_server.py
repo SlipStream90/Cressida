@@ -48,6 +48,7 @@ from cressida.core.paths import (  # noqa: E402
     missions_root as _missions_root,
     new_mission_id,
 )
+from cressida.core.providers.auto import provider_for_invoker  # noqa: E402
 
 mcp = FastMCP(
     "Cressida",
@@ -57,6 +58,10 @@ mcp = FastMCP(
         "Use mission_status to check progress. "
         "Use read_mission_file to inspect outputs. "
         "Use resolve_escalation when BOND requests a human decision."
+        " When starting a mission, pass the calling CLI identity as invoker "
+        "(claude_cli, opencode, kilocode, or codex) so the mission runs on the "
+        "CLI you are in; use provider=auto with no invoker only when the caller "
+        "is unknown."
     ),
 )
 
@@ -254,6 +259,7 @@ def _spawn_mission_background(
 async def run_mission(
     brief: str,
     provider: str = "auto",
+    invoker: str = "",
     ollama_model: str = "llama3.2",
     priority: str = "medium",
     project_dir: str = "",
@@ -279,6 +285,13 @@ async def run_mission(
         brief:        What you want built. Can be a plain-English description
                       or a path to a markdown file containing a PRD.
         provider:     auto | opencode | claude_cli | codex | anthropic | openai | gemini | groq | ollama | kilocode | gateway
+        invoker:      Which CLI is calling this tool — claude_cli, opencode,
+                      kilocode, or codex. With provider="auto" the mission runs
+                      on that CLI, so a mission started from Claude Code drives
+                      agents through `claude` and one started from opencode uses
+                      opencode. Ignored when provider is explicit; falls back to
+                      the CRESSIDA_INVOKER environment variable, then to
+                      availability detection.
         ollama_model: Only used when provider=ollama. Default: llama3.2
         priority:     low | medium | high.
         project_dir:  Absolute path to the project the mission should act on —
@@ -304,6 +317,11 @@ async def run_mission(
     from datetime import datetime as _dt
 
     _ensure_monitor_started()
+
+    # An auto mission runs on the CLI that called us, when that CLI said who
+    # it is — the user is already authenticated there and it keeps the mission
+    # on the tool they chose, instead of on whatever detection ranks first.
+    provider = provider_for_invoker(provider, invoker)
 
     resuming = bool(mission_id)
     if resuming:

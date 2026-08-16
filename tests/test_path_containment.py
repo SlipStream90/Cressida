@@ -118,3 +118,26 @@ def test_new_mission_id_truncates_on_word_boundaries(tmp_path, monkeypatch):
     assert not slug.endswith("-")
     assert all(w in ("queuellm", "frontend", "phase", "implementation", "now")
                for w in slug.split("-")), slug
+
+
+def test_invoker_binds_an_auto_mission_to_the_calling_cli(monkeypatch):
+    """Running Cressida from a CLI should run the mission on that CLI."""
+    from cressida.core.providers.auto import provider_for_invoker
+
+    monkeypatch.delenv("CRESSIDA_INVOKER", raising=False)
+    assert provider_for_invoker("auto", "opencode") == "opencode"
+    assert provider_for_invoker("auto", "claude") == "claude_cli"
+    assert provider_for_invoker("auto", "Kilo-Code") == "kilocode"
+    assert provider_for_invoker("auto", "codex") == "codex"
+
+    # An explicit provider always wins over the invoker.
+    assert provider_for_invoker("gemini", "opencode") == "gemini"
+
+    # Unknown or absent invoker leaves detection in charge.
+    assert provider_for_invoker("auto", "some-editor") == "auto"
+    assert provider_for_invoker("auto", "") == "auto"
+
+    # Env var is the fallback for anything launched from a shell.
+    monkeypatch.setenv("CRESSIDA_INVOKER", "opencode")
+    assert provider_for_invoker("auto", "") == "opencode"
+    assert provider_for_invoker("auto", "codex") == "codex"  # argument beats env

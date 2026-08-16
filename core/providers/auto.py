@@ -66,6 +66,38 @@ _CODEX_ALIASES = {"codex", "openai_codex", "codex_cli"}
 _KILOCODE_ALIASES = {"kilocode", "kilo", "kilo-code", "kilo_code"}
 
 
+# Which CLI invoked Cressida -> which provider that mission should run on.
+# MCP does not standardize a caller identity, so the auto-invoke skills pass
+# it explicitly (run_mission's `invoker` argument), and anything launched from
+# a shell can set CRESSIDA_INVOKER instead.
+_INVOKER_ALIASES = {
+    "claude": PROVIDER_CLAUDE_CLI, "claude-code": PROVIDER_CLAUDE_CLI,
+    "claude_code": PROVIDER_CLAUDE_CLI, "claude_cli": PROVIDER_CLAUDE_CLI,
+    "opencode": PROVIDER_OPENCODE, "open-code": PROVIDER_OPENCODE,
+    "kilo": PROVIDER_KILOCODE, "kilocode": PROVIDER_KILOCODE, "kilo-code": PROVIDER_KILOCODE,
+    "codex": PROVIDER_CODEX, "codex-cli": PROVIDER_CODEX,
+}
+
+
+def provider_for_invoker(provider: str = "auto", invoker: str = "") -> str:
+    """Bind an `auto` mission to the CLI the user is actually working in.
+
+    Running Cressida from Claude Code should drive agents through the `claude`
+    CLI; running it from opencode should use opencode — the user is already
+    authenticated there, and it keeps a mission on the tool they chose rather
+    than on whatever the detection order happens to rank first.
+
+    An explicit `provider` always wins. An unknown or absent invoker returns
+    "auto" unchanged, so detect_provider()'s availability probing still
+    decides. This never selects a provider that isn't installed: the caller
+    validates against detect_available_providers() before using the result.
+    """
+    if str(provider or "").strip().lower() != "auto":
+        return provider
+    raw = (invoker or os.environ.get("CRESSIDA_INVOKER", "")).strip().lower()
+    return _INVOKER_ALIASES.get(raw, "auto")
+
+
 def detect_provider() -> str:
     """Return the name of the first available provider.
 
@@ -89,6 +121,13 @@ def detect_provider() -> str:
                 f"Valid options: {', '.join(_ALL_PROVIDERS)}"
             )
         return explicit
+
+    # The CLI the user launched Cressida from, when it identified itself
+    # (CRESSIDA_INVOKER) — ranks above API-key detection because it reflects
+    # an actual choice rather than an installed credential.
+    from_invoker = provider_for_invoker("auto", "")
+    if from_invoker != "auto" and from_invoker in detect_available_providers():
+        return from_invoker
 
     # Anthropic
     if os.environ.get("ANTHROPIC_API_KEY") and _pkg("anthropic"):
