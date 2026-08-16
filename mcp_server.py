@@ -28,6 +28,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
@@ -79,6 +80,15 @@ def _provider_for_invoker(provider: str, invoker: str) -> str:
         "codex": "codex", "codex-cli": "codex",
     }
     return aliases.get(invoker.strip().lower(), "auto")
+
+
+def _coerce_brief_text(brief: Any) -> str:
+    """Normalize MCP attachment, bytes, path, and inline brief inputs."""
+    if hasattr(brief, "read") and callable(brief.read):
+        brief = brief.read()
+    if isinstance(brief, bytes):
+        return brief.decode("utf-8", errors="replace")
+    return str(brief or "")
 
 # ── Status monitoring (starts once on first use) ─────────────────────────────
 _monitor_started = False
@@ -255,7 +265,7 @@ def _spawn_mission_background(
 
 @mcp.tool()
 async def run_mission(
-    brief: str,
+    brief: Any,
     provider: str = "auto",
     invoker: str = "",
     ollama_model: str = "llama3.2",
@@ -335,6 +345,7 @@ async def run_mission(
     # "desktop", never "frontend" or "dashboard". Skill selection isn't the
     # only downstream reader of state.brief, so this is fixed at the source,
     # not patched in the one place it happened to be noticed.
+    brief = _coerce_brief_text(brief)
     resolved_brief = brief
     try:
         candidate = Path(brief.strip())
