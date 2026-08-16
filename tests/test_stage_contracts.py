@@ -18,7 +18,23 @@ def test_stage_handoffs_include_required_upstream_artifacts(tmp_path):
     assert "missions/mission_stage_contracts/backlog.json" in reads["review"]
 
     architecture_writes = state.tasks["architecture"].metadata["writes"]
-    assert architecture_writes == ["missions/mission_stage_contracts/ARCHITECTURE.md"]
+    assert architecture_writes == [
+        "missions/mission_stage_contracts/ARCHITECTURE.md",
+        # The build sheet Q writes for BRANCH — see below for why BRANCH reads
+        # this instead of the architecture document itself.
+        "missions/mission_stage_contracts/architecture/BUILD_SPEC.md",
+    ]
+
+    # BRANCH gets the build sheet, the task list and the PRD — not every
+    # document the mission produced. It previously received ARCHITECTURE.md and
+    # the methodology brief too, then went looking through the mission tree for
+    # the rest; on one live mission that consumed the entire implementation run
+    # and it never wrote a file.
+    assert reads["implementation"] == {
+        "missions/mission_stage_contracts/architecture/BUILD_SPEC.md",
+        "missions/mission_stage_contracts/backlog.json",
+        "missions/mission_stage_contracts/intelligence/PRD.md",
+    }
 
 
 def test_trivial_stage_does_not_require_skipped_methodology_artifact(tmp_path):

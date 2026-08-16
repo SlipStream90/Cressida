@@ -93,7 +93,10 @@ from cressida.core.providers.opencode_agent import parse_jsonl_stream
 # Reuse the proven, platform-correct process-tree kill (kills the whole
 # cmd.exe -> node.exe chain, not just the direct child) so a timed-out
 # `kilo run` cannot leave an orphaned agent still editing the project.
-from cressida.core.providers.claude_cli_agent import _terminate_process_tree
+from cressida.core.providers.claude_cli_agent import (
+    _terminate_process_tree,
+    write_cli_failure_log,
+)
 
 
 # How long (seconds) to wait on a single CLI completion before giving up.
@@ -190,7 +193,9 @@ class KiloCodeAgent(ProviderAgentBase):
         # the agent spec is prepended to the task prompt.
         full_prompt = f"[Agent Spec: {self.role.value}]\n\n{system_prompt}\n\n---\n\n[Task]\n\n{user_prompt}\n\n{self._artifact_boundary_prompt(state, task)}"
 
-        text, tool_events = await self._invoke(full_prompt, project_dir(state))
+        text, tool_events = await self._invoke(
+            full_prompt, project_dir(state), state.mission_id, task.id,
+        )
 
         # Best-effort observability, strictly after the result is already
         # in hand — see module docstring's "Notes / limitations" for why
@@ -233,17 +238,23 @@ class KiloCodeAgent(ProviderAgentBase):
 
     # ── CLI invocation ──────────────────────────────────────────────────────
 
-    async def _invoke(self, prompt: str, target: Path | None = None) -> tuple[str, list[dict[str, Any]]]:
+    async def _invoke(
+        self, prompt: str, target: Path | None = None,
+        mission_id: str = "", task_id: str = "",
+    ) -> tuple[str, list[dict[str, Any]]]:
         import asyncio
 
         # Serialized per CLI — see cli_lock() in providers/base.py for why
         # two concurrent invocations of this CLI fail on its own SQLite store.
         async with cli_lock("kilo"):
             return await asyncio.get_event_loop().run_in_executor(
-                None, self._invoke_blocking, prompt, target
+                None, self._invoke_blocking, prompt, target, mission_id, task_id
             )
 
-    def _invoke_blocking(self, prompt: str, target: Path | None = None) -> tuple[str, list[dict[str, Any]]]:
+    def _invoke_blocking(
+        self, prompt: str, target: Path | None = None,
+        mission_id: str = "", task_id: str = "",
+    ) -> tuple[str, list[dict[str, Any]]]:
         work_dir = str((target or project_dir()).resolve())
         cmd = [
             self._cli,
@@ -293,10 +304,16 @@ class KiloCodeAgent(ProviderAgentBase):
             ) from exc
 
         if proc.returncode != 0:
+            # Full, untruncated output to disk — the 2000-char cuts below have
+            # hidden the actual cause of a real failure before.
+            log_path = write_cli_failure_log(
+                mission_id, task_id, cmd, proc.returncode, stdout, stderr,
+            )
             raise RuntimeError(
                 f"Kilo Code CLI exited {proc.returncode} for role {self.role.value}.\n"
                 f"stderr: {(stderr or '').strip()[:2000]}\n"
-                f"stdout: {(stdout or '').strip()[:2000]}"
+                f"stdout: {(stdout or '').strip()[:2000]}\n"
+                f"Full log: {log_path}"
             )
 
         return self._parse_output(stdout)

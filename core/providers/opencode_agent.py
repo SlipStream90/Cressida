@@ -42,7 +42,10 @@ from cressida.core import AgentRole, MissionState, Task
 from cressida.core.paths import project_dir
 from cressida.core.events import EventBus
 from cressida.core.providers.base import ProviderAgentBase, cli_lock
-from cressida.core.providers.claude_cli_agent import _terminate_process_tree
+from cressida.core.providers.claude_cli_agent import (
+    _terminate_process_tree,
+    write_cli_failure_log,
+)
 
 
 # Strategic roles get the strongest model; workers get the faster one.
@@ -145,7 +148,9 @@ class OpenCodeAgent(ProviderAgentBase):
         full_prompt = f"[Agent Spec: {self.role.value}]\n\n{system_prompt}\n\n---\n\n[Task]\n\n{user_prompt}\n\n{self._artifact_boundary_prompt(state, task)}"
 
         # Run against the mission's target project, not the Cressida install.
-        text, tool_events = await self._invoke(full_prompt, project_dir(state))
+        text, tool_events = await self._invoke(
+            full_prompt, project_dir(state), state.mission_id, task.id,
+        )
 
         # Best-effort observability, strictly after the result is already in
         # hand — parsed from the completed JSONL output rather than a live
@@ -190,17 +195,23 @@ class OpenCodeAgent(ProviderAgentBase):
 
     # ── CLI invocation ──────────────────────────────────────────────────────
 
-    async def _invoke(self, prompt: str, target: Path | None = None) -> tuple[str, list[dict[str, Any]]]:
+    async def _invoke(
+        self, prompt: str, target: Path | None = None,
+        mission_id: str = "", task_id: str = "",
+    ) -> tuple[str, list[dict[str, Any]]]:
         import asyncio
 
         # Serialized per CLI — see cli_lock() in providers/base.py for why
         # two concurrent invocations of this CLI fail on its own SQLite store.
         async with cli_lock("opencode"):
             return await asyncio.get_event_loop().run_in_executor(
-                None, self._invoke_blocking, prompt, target
+                None, self._invoke_blocking, prompt, target, mission_id, task_id
             )
 
-    def _invoke_blocking(self, prompt: str, target: Path | None = None) -> tuple[str, list[dict[str, Any]]]:
+    def _invoke_blocking(
+        self, prompt: str, target: Path | None = None,
+        mission_id: str = "", task_id: str = "",
+    ) -> tuple[str, list[dict[str, Any]]]:
         work_dir = str((target or project_dir()).resolve())
         cmd = [
             self._cli,
@@ -263,13 +274,21 @@ class OpenCodeAgent(ProviderAgentBase):
             ) from exc
 
         if proc.returncode != 0:
+            # Full, untruncated output to disk. The message below cuts off at
+            # 2000 chars, and on a real failure the cause sat past that cut —
+            # TANNER's exit-1 on 20260816-small-url-shortener-service-03 was
+            # undiagnosable because the captured stdout stopped mid-exploration.
+            log_path = write_cli_failure_log(
+                mission_id, task_id, cmd, proc.returncode, stdout, stderr,
+            )
             raise RuntimeError(
                 f"OpenCode CLI exited {proc.returncode} for role {self.role.value}.\n"
                 f"stderr: {(stderr or '').strip()[:2000]}\n"
                 # The CLI reports its own failures as JSON on *stdout*
                 # ({"type":"error",...}) and usually leaves stderr empty, so
                 # omitting stdout here left every failure diagnosis-free.
-                f"stdout: {(stdout or '').strip()[:2000]}"
+                f"stdout: {(stdout or '').strip()[:2000]}\n"
+                f"Full log: {log_path}"
             )
 
         return self._parse_output(stdout)

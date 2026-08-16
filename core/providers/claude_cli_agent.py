@@ -1018,44 +1018,15 @@ class ClaudeCLIAgent(ProviderAgentBase):
             except Exception:
                 pass
 
+    # Kept as a method for the existing call sites; the implementation is the
+    # module-level write_cli_failure_log below, shared with the other CLI
+    # providers so no provider has to truncate a failure to 2000 chars.
     @staticmethod
     def _write_failure_log(
         mission_id: str | None, task_id: str | None, cmd: list[str],
         returncode: int, stdout: str | None, stderr: str | None,
     ) -> str:
-        """Persist the full (untruncated) stdout/stderr of a failed CLI
-        invocation to disk, so it survives even if the RuntimeError message
-        (which truncates stderr to 2000 chars) gets truncated again upstream.
-
-        Written under missions/<mission_id>/logs/ — mirroring the existing
-        missions/<mission_id>/outputs/ and missions/<mission_id>/bond_decisions/
-        convention (see ProviderAgentBase._write_output in base.py) — since no
-        "logs" folder existed yet under a mission dir. Falls back to a temp
-        file if mission_id is unavailable, and never raises: a failure while
-        trying to log a failure must not mask the original error.
-        """
-        try:
-            if mission_id:
-                out_dir = mission_dir(mission_id) / "logs"
-            else:
-                out_dir = Path(tempfile.gettempdir()) / "cressida_logs"
-            out_dir.mkdir(parents=True, exist_ok=True)
-            # Microseconds, so two failures of the same task in the same
-            # second don't collapse into one log file.
-            stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            name = f"{task_id or 'unknown_task'}_{stamp}.log"
-            log_path = out_dir / name
-            log_path.write_text(
-                "cmd: " + json.dumps(cmd) + "\n"
-                f"returncode: {returncode!r} (type={type(returncode).__name__})\n"
-                "\n--- stdout ---\n" + (stdout or "") +
-                "\n--- stderr ---\n" + (stderr or ""),
-                encoding="utf-8",
-            )
-            return str(log_path)
-        except Exception as exc:
-            _logger.error("failed to write CLI failure log to disk: %r", exc)
-            return "(failed to write log file)"
+        return write_cli_failure_log(mission_id, task_id, cmd, returncode, stdout, stderr)
 
     @staticmethod
     def _extract_result_text(data: dict) -> str:
@@ -1095,3 +1066,42 @@ class ClaudeCLIAgent(ProviderAgentBase):
         if isinstance(data, dict):
             return ClaudeCLIAgent._extract_result_text(data)
         return raw
+
+
+def write_cli_failure_log(
+    mission_id: str | None, task_id: str | None, cmd: list[str],
+    returncode: int, stdout: str | None, stderr: str | None,
+) -> str:
+    """Persist the full, untruncated stdout/stderr of a failed CLI invocation.
+
+    Every CLI provider's error message truncates output to 2000 characters,
+    and these CLIs report their failures as JSON on stdout — so a failure
+    whose cause sits past that cutoff was undiagnosable. Observed on
+    missions/20260816-small-url-shortener-service-03: TANNER exited 1 and the
+    captured stdout stopped mid-way through the agent's shell exploration,
+    with the actual error event beyond the cut.
+
+    Written under missions/<mission_id>/logs/. Falls back to a temp file if
+    mission_id is unavailable, and never raises: a failure while logging a
+    failure must not mask the original error.
+    """
+    try:
+        if mission_id:
+            out_dir = mission_dir(mission_id) / "logs"
+        else:
+            out_dir = Path(tempfile.gettempdir()) / "cressida_logs"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        name = f"{task_id or 'unknown_task'}_{stamp}.log"
+        log_path = out_dir / name
+        log_path.write_text(
+            "cmd: " + json.dumps(cmd) + "\n"
+            f"returncode: {returncode!r} (type={type(returncode).__name__})\n"
+            "\n--- stdout ---\n" + (stdout or "") +
+            "\n--- stderr ---\n" + (stderr or ""),
+            encoding="utf-8",
+        )
+        return str(log_path)
+    except Exception as exc:
+        _logger.error("failed to write CLI failure log to disk: %r", exc)
+        return "(failed to write log file)"

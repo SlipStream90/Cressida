@@ -197,6 +197,16 @@ def _build_mission_state(
     architecture_depends_on = ["product_definition"]
     architecture_description = (
         "Design system architecture, API contracts, and data models. "
+        f"Write TWO documents. (1) missions/{mission_id}/ARCHITECTURE.md — the reasoning, "
+        f"read by BOND and REVIEW. (2) missions/{mission_id}/architecture/BUILD_SPEC.md — the "
+        "handoff to BRANCH, which is the ONLY architecture file BRANCH reads: a build sheet "
+        "under 500 words, tables not prose, giving the exact file layout, the exact function "
+        "and endpoint signatures BRANCH should use verbatim, the data schema, the pinned "
+        "versions and verified patterns carried forward from the methodology brief (BRANCH "
+        "does not read that brief), and one line per test to satisfy. No rationale, no "
+        "alternatives, no restating the PRD in BUILD_SPEC — those belong in ARCHITECTURE.md. "
+        "Keep the whole architecture proportionate to the mission: a single-module service "
+        "does not need separate API_CONTRACTS/DATA_MODELS files or a stack of ADRs. "
         "The mission subprocess always has WebSearch/WebFetch/context7, Bash, and read-only "
         "GitHub/Supabase tools available with no extra approval (see "
         "core/providers/claude_cli_agent.py:_ALLOWED_TOOLS). If — and only if — the architecture "
@@ -230,6 +240,7 @@ def _build_mission_state(
             "trivial": trivial,
             "writes": [
                 f"missions/{mission_id}/ARCHITECTURE.md",
+                f"missions/{mission_id}/architecture/BUILD_SPEC.md",
             ],
         },
     ))
@@ -299,27 +310,30 @@ def _build_mission_state(
         state.tasks["planning"].metadata["reads"].append(
             f"missions/{mission_id}/intelligence/methodology_brief.md"
         )
+    # BRANCH's inputs are deliberately narrow: the build sheet Q wrote for it,
+    # the task list, and the PRD for intent. It used to receive ARCHITECTURE.md
+    # and the methodology brief as well, and then went looking for the rest of
+    # the mission tree on its own — on
+    # missions/20260816-small-url-shortener-service-03 it spent its entire run
+    # reading ~50 KB across eleven architecture documents (most of them already
+    # inlined into its prompt) and never wrote a line of code. Everything it
+    # actually needs from those documents is carried forward into BUILD_SPEC.md.
     implementation_reads = [
-        f"missions/{mission_id}/intelligence/PRD.md",
-        f"missions/{mission_id}/ARCHITECTURE.md",
+        f"missions/{mission_id}/architecture/BUILD_SPEC.md",
         f"missions/{mission_id}/backlog.json",
+        f"missions/{mission_id}/intelligence/PRD.md",
     ]
     implementation_description = (
-        "Implement the code based on the PRD, architecture, and backlog. "
-        "Write all source files, tests, and configuration files as specified. "
+        "Write the code. BUILD_SPEC.md is your specification: it carries the file layout, the "
+        "exact signatures to use, the schema, the pinned versions and verified patterns, and "
+        "the tests to satisfy. It, the backlog, and the PRD are already included below — you "
+        "do not need to read them again, and you should not go looking through the rest of the "
+        "mission directory for more context. If something is genuinely missing from the spec, "
+        "make the smallest reasonable choice and note it; do not spend the run researching. "
+        "Start writing files early rather than surveying first. "
         "Use the write_file tool to create each file. "
-        f"Write all source files under the target project directory: {target}"
+        f"Write all source files, tests, and configuration under the target project directory: {target}"
     )
-    if not trivial:
-        implementation_reads.insert(1, f"missions/{mission_id}/intelligence/methodology_brief.md")
-        implementation_description = (
-            "Implement the code based on the PRD, architecture, and backlog. "
-            "Write all source files, tests, and configuration files as specified. "
-            "Use the versions, patterns, and idioms established in the methodology brief — "
-            "do not fall back on older patterns it marks as superseded. "
-            "Use the write_file tool to create each file. "
-            f"Write all source files under the target project directory: {target}"
-        )
     state.add_task(Task(
         id="implementation",
         name="Implementation",

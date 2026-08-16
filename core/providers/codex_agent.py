@@ -35,7 +35,10 @@ from cressida.core import AgentRole, MissionState, Task
 from cressida.core.paths import cressida_home, project_dir
 from cressida.core.events import EventBus
 from cressida.core.providers.base import ProviderAgentBase
-from cressida.core.providers.claude_cli_agent import _terminate_process_tree
+from cressida.core.providers.claude_cli_agent import (
+    _terminate_process_tree,
+    write_cli_failure_log,
+)
 
 
 _DEFAULT_TIMEOUT = float(os.environ.get("CRESSIDA_CODEX_TIMEOUT", "3600"))
@@ -116,21 +119,29 @@ class CodexAgent(ProviderAgentBase):
         user_prompt = self._build_user_prompt(state, task)
         full_prompt = f"[Agent Spec: {self.role.value}]\n\n{system_prompt}\n\n---\n\n[Task]\n\n{user_prompt}"
 
-        text = await self._invoke(full_prompt, project_dir(state))
+        text = await self._invoke(
+            full_prompt, project_dir(state), state.mission_id, task.id,
+        )
 
         self._write_output(state.mission_id, task, text)
         return text
 
     # ── CLI invocation ──────────────────────────────────────────────────────
 
-    async def _invoke(self, prompt: str, target: Path | None = None) -> str:
+    async def _invoke(
+        self, prompt: str, target: Path | None = None,
+        mission_id: str = "", task_id: str = "",
+    ) -> str:
         import asyncio
 
         return await asyncio.get_event_loop().run_in_executor(
-            None, self._invoke_blocking, prompt, target
+            None, self._invoke_blocking, prompt, target, mission_id, task_id
         )
 
-    def _invoke_blocking(self, prompt: str, target: Path | None = None) -> str:
+    def _invoke_blocking(
+        self, prompt: str, target: Path | None = None,
+        mission_id: str = "", task_id: str = "",
+    ) -> str:
         work_dir = str((target or project_dir()).resolve())
         home = str(cressida_home())
 
@@ -186,7 +197,8 @@ class CodexAgent(ProviderAgentBase):
                 raise RuntimeError(
                     f"Codex CLI exited {proc.returncode} for role {self.role.value}.\n"
                     f"stderr: {(stderr or '').strip()[:2000]}\n"
-                    f"stdout: {(stdout or '').strip()[:2000]}"
+                    f"stdout: {(stdout or '').strip()[:2000]}\n"
+                    f"Full log: {write_cli_failure_log(mission_id, task_id, cmd, proc.returncode, stdout, stderr)}"
                 )
             out_file = Path(out_path)
             return out_file.read_text(encoding="utf-8").strip() if out_file.exists() else stdout.strip()
