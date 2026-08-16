@@ -68,3 +68,6 @@ evaluations/
 
 # Python
 *.pyc
+
+# Mission artifacts dropped at the repo root by earlier runs — not source.
+QUEUELLM_FRONTEND_PRD.md
