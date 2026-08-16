@@ -1040,7 +1040,9 @@ class ClaudeCLIAgent(ProviderAgentBase):
             else:
                 out_dir = Path(tempfile.gettempdir()) / "cressida_logs"
             out_dir.mkdir(parents=True, exist_ok=True)
-            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            # Microseconds, so two failures of the same task in the same
+            # second don't collapse into one log file.
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             name = f"{task_id or 'unknown_task'}_{stamp}.log"
             log_path = out_dir / name
             log_path.write_text(

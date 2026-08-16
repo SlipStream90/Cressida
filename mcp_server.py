@@ -44,7 +44,10 @@ if str(_CRESSIDA_ROOT) not in sys.path:
 # tracked agents/, knowledge/, and missions/ trees. The previous anchor used
 # _CRESSIDA_ROOT, one level higher, putting missions outside the repo and in a
 # different tree from the one agents wrote to. See cressida/core/paths.py.
-from cressida.core.paths import missions_root as _missions_root  # noqa: E402
+from cressida.core.paths import (  # noqa: E402
+    missions_root as _missions_root,
+    new_mission_id,
+)
 
 mcp = FastMCP(
     "Cressida",
@@ -328,13 +331,6 @@ async def run_mission(
                 f"Watch it with `cressida watch {mission_id}`, or wait for it to "
                 f"finish/stall before resuming."
             )
-    if not mission_id:
-        # Microsecond suffix avoids collisions between missions started in
-        # the same wall-clock second (second-resolution timestamps alone
-        # let two rapid run_mission calls land on the same mission_id and
-        # silently share/overwrite one mission directory).
-        mission_id = f"mission_{_dt.now().strftime('%Y%m%d_%H%M%S_%f')}"
-
     # Resolve a path-form brief to its actual content *here*, before it is ever
     # persisted. cli/commands.py:run_mission also resolves a path -- but it
     # resolves the path to the copy this function writes below, not the
@@ -355,6 +351,12 @@ async def run_mission(
             resolved_brief = candidate.read_text(encoding="utf-8")
     except OSError:
         pass  # Not a valid path on this OS (e.g. too long) -- treat as literal text.
+
+    if not mission_id:
+        # Readable and sortable: YYYYMMDD-<slug>-NN. Allocated from the
+        # resolved brief (not the path form), and made unique by reserving
+        # the directory rather than by a microsecond timestamp.
+        mission_id = new_mission_id(resolved_brief)
 
     # Keep the brief inside the mission it belongs to. It used to be written to
     # the directory above the repo root, where concurrent missions overwrote each

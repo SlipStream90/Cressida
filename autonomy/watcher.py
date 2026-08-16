@@ -35,6 +35,7 @@ from typing import Any
 import yaml
 
 from cressida.core.events import Event, EventBus, EventType
+from cressida.core.paths import missions_root, new_mission_id
 from cressida.core.registry import AgentRegistry
 from cressida.core import AgentRole, MissionState, MissionStatus, Priority, Task, TaskStatus
 from cressida.memory.system import MemorySystem
@@ -127,15 +128,20 @@ class MissionWatcher:
         registry: AgentRegistry,
         event_bus: EventBus,
         memory: MemorySystem,
-        inbox_dir: str | Path = "missions/inbox",
-        scheduled_dir: str | Path = "missions/scheduled",
+        inbox_dir: str | Path | None = None,
+        scheduled_dir: str | Path | None = None,
         poll_interval: float = 10.0,
     ) -> None:
         self._registry = registry
         self._event_bus = event_bus
         self._memory = memory
-        self._inbox = Path(inbox_dir)
-        self._scheduled = Path(scheduled_dir)
+        # Anchored to missions_root(), not the process CWD. The old relative
+        # defaults ("missions/inbox") meant a watcher started from anywhere
+        # other than the package directory silently created and polled a
+        # different inbox than the one missions/ actually uses — the exact
+        # class of split-tree bug core/paths.py exists to eliminate.
+        self._inbox = Path(inbox_dir) if inbox_dir else missions_root() / "inbox"
+        self._scheduled = Path(scheduled_dir) if scheduled_dir else missions_root() / "scheduled"
         self._poll_interval = poll_interval
         self._seen_inbox: set[str] = set()
         self._schedule_state: dict[str, datetime] = {}  # filename → next fire time
@@ -222,7 +228,7 @@ class MissionWatcher:
     ) -> None:
         from cressida.cli.commands import _build_mission_state
 
-        mission_id = meta.get("mission_id") or f"MSN-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        mission_id = meta.get("mission_id") or new_mission_id(brief)
         priority_str = str(meta.get("priority", "MEDIUM")).upper()
         priority = _PRIORITY_MAP.get(priority_str, Priority.MEDIUM)
 

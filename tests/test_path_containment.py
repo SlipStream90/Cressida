@@ -86,3 +86,35 @@ def test_bad_tool_arguments_come_back_as_a_result_not_an_exception():
     out = execute_tool("read_file", {"nonexistent_kwarg": 1}, mission_id="m1")
     assert out.startswith("ERROR calling tool 'read_file'")
     assert execute_tool("no_such_tool", {}, mission_id="m1").startswith("Unknown tool")
+
+
+def test_new_mission_id_is_readable_sortable_and_unique(tmp_path, monkeypatch):
+    monkeypatch.setenv("CRESSIDA_MISSIONS_DIR", str(tmp_path))
+    from cressida.core.paths import new_mission_id
+
+    brief = "Build the QueueLLM frontend Phase 1-2 implementation."
+    first = new_mission_id(brief)
+    second = new_mission_id(brief)
+
+    assert first == "20260816-queuellm-frontend-phase-01".replace(
+        "20260816", first.split("-")[0]
+    )
+    assert second.endswith("-02"), second      # same brief, same day, next slot
+    assert first != second                     # reserved by mkdir, not by clock
+    assert (tmp_path / first).is_dir()
+    assert sorted([second, first]) == [first, second]  # ids sort chronologically
+
+    # A stopword-only brief still yields a usable id rather than an empty slug.
+    assert new_mission_id("build the app").split("-")[1] != ""
+    assert new_mission_id("").split("-")[1] == "mission"
+
+
+def test_new_mission_id_truncates_on_word_boundaries(tmp_path, monkeypatch):
+    monkeypatch.setenv("CRESSIDA_MISSIONS_DIR", str(tmp_path))
+    from cressida.core.paths import _slugify_brief
+
+    slug = _slugify_brief("Build the QueueLLM frontend Phase 1-2 implementation now")
+    assert "-" in slug and len(slug) <= 28
+    assert not slug.endswith("-")
+    assert all(w in ("queuellm", "frontend", "phase", "implementation", "now")
+               for w in slug.split("-")), slug

@@ -330,7 +330,9 @@ def _escalate(
     if mission_id:
         esc_dir = mission_dir(mission_id) / "escalations"
         esc_dir.mkdir(parents=True, exist_ok=True)
-        fname = f"escalation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        # Microseconds: two escalations raised in the same second used to
+        # land on one filename, and the second silently replaced the first.
+        fname = f"escalation_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.json"
         (esc_dir / fname).write_text(json.dumps(record, indent=2), encoding="utf-8")
     raise PhaseEscalatedError(
         f"BOND escalated to CRESSIDA COMMAND: {issue}. "

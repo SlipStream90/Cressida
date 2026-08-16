@@ -10,7 +10,8 @@ from typing import Any
 
 from cressida.core.events import EventBus, EventType
 from cressida.core.paths import (
-    _check_project_dir_is_safe, knowledge_dir, mission_dir, missions_root, project_dir,
+    _check_project_dir_is_safe, knowledge_dir, mission_dir, missions_root, new_mission_id,
+    project_dir,
 )
 from cressida.core.registry import AgentRegistry
 from cressida.core.types import AgentRole, MissionState, MissionStatus, Priority, Task, TaskStatus
@@ -102,7 +103,12 @@ def _build_mission_state(
     state.add_task(Task(
         id="research",
         name="Research phase",
-        description=f"Research technologies for: {brief[:200]}",
+        description=(
+            f"Research technologies for: {brief[:200]}. "
+            "Keep research_report.md under 800 words, decisions-table first — it is "
+            "read by later agents, and an oversized report costs execution time in "
+            "every one of them (see the Output Discipline section of your spec)."
+        ),
         agent=AgentRole.INTELLIGENCE,
         priority=default_priority,
         metadata={
@@ -120,7 +126,10 @@ def _build_mission_state(
                 "search snippets alone are not enough to cite a claim. Establish current versions and release "
                 "dates for every dependency, identify deprecated or superseded approaches and what replaced "
                 "them, extract the idiomatic patterns and project structure to follow, and record known "
-                "pitfalls. Cite every claim with a URL and date; label anything unverified as [UNVERIFIED]."
+                "pitfalls. Cite every claim with a URL and date; label anything unverified as [UNVERIFIED]. "
+                "Keep methodology_brief.md under 900 words plus the version table, verdicts table first; "
+                "sources.md is a one-line-per-source list and nothing else. Q and BRANCH have to read "
+                "these in full — length here directly costs mission time."
             ),
             agent=AgentRole.LEITER,
             priority=default_priority,
@@ -136,7 +145,10 @@ def _build_mission_state(
     state.add_task(Task(
         id="product_definition",
         name="Product definition",
-        description="Define product requirements, user personas, and MVP scope",
+        description=(
+            "Define product requirements, user personas, and MVP scope. "
+            "PRD.md under 600 words, Roadmap.md under 300 — see your spec's Output Discipline."
+        ),
         agent=AgentRole.INTELLIGENCE,
         priority=default_priority,
         depends_on=["research"],
@@ -394,9 +406,8 @@ async def run_mission(args: argparse.Namespace) -> int:
     else:
         brief = args.brief
 
-    # Microsecond suffix avoids two missions started in the same wall-clock
-    # second colliding on mission_id (and thus on missions/<id>/).
-    mission_id = getattr(args, "mission_id", None) or f"mission_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+    # Readable, sortable, collision-proof — see core.paths.new_mission_id.
+    mission_id = getattr(args, "mission_id", None) or new_mission_id(brief)
 
     event_bus = EventBus()
     _wire_vault_sync(event_bus)

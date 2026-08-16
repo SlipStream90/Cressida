@@ -86,6 +86,67 @@ class InvalidMissionIdError(ValueError):
     """Raised when a mission_id is not a single, safe directory name."""
 
 
+# Words that carry no identifying signal in a brief's opening phrase — almost
+# every brief starts with some arrangement of them, so a slug built from them
+# would be the same for every mission.
+_SLUG_STOPWORDS = frozenset({
+    "a", "an", "the", "and", "for", "with", "to", "of", "in", "on", "into",
+    "build", "create", "make", "implement", "add", "new", "using", "use",
+    "write", "develop", "set", "up", "app", "application", "project", "system",
+    "please", "that", "this", "from", "it", "its",
+})
+
+
+def _slugify_brief(brief: str, max_words: int = 4, max_len: int = 28) -> str:
+    """Short kebab-case tag from the brief's first meaningful words."""
+    import re
+
+    words = re.findall(r"[A-Za-z0-9]+", str(brief).lower())
+    picked: list[str] = []
+    length = 0
+    for w in words:
+        if len(w) <= 2 or w in _SLUG_STOPWORDS:
+            continue
+        if picked and length + 1 + len(w) > max_len:
+            break  # truncate on a word boundary, never mid-word
+        length += (1 if picked else 0) + len(w)
+        picked.append(w)
+        if len(picked) == max_words:
+            break
+    return "-".join(picked)[:max_len].strip("-") or "mission"
+
+
+def new_mission_id(brief: str = "", when: "datetime | None" = None) -> str:
+    """Allocate a readable, sortable, unique mission id.
+
+    Format: ``YYYYMMDD-<slug>-NN`` — e.g. ``20260816-queuellm-frontend-01``.
+
+    Replaces three different generators that each produced something opaque:
+    ``mission_20260816_132255_495556`` (microsecond timestamp),
+    ``MSN-20260816-132255``. The microseconds existed only to prevent two
+    missions started in the same second from sharing a directory; that job is
+    done here by *reserving* the directory with an exclusive mkdir, which is
+    atomic and therefore also safe across processes — something a timestamp
+    never was.
+    """
+    from datetime import datetime as _datetime
+
+    day = (when or _datetime.now()).strftime("%Y%m%d")
+    slug = _slugify_brief(brief)
+    root = missions_root()
+    root.mkdir(parents=True, exist_ok=True)
+    for n in range(1, 1000):
+        candidate = f"{day}-{slug}-{n:02d}"
+        try:
+            (root / candidate).mkdir(exist_ok=False)
+        except FileExistsError:
+            continue
+        return candidate
+    raise RuntimeError(
+        f"Could not allocate a mission id for {day}-{slug}: 999 already exist."
+    )
+
+
 def mission_dir(mission_id: str) -> Path:
     """Directory for one mission. ``mission_id`` must be a bare directory name.
 
