@@ -185,7 +185,8 @@ class CodexAgent(ProviderAgentBase):
             if proc.returncode != 0:
                 raise RuntimeError(
                     f"Codex CLI exited {proc.returncode} for role {self.role.value}.\n"
-                    f"stderr: {(stderr or '').strip()[:2000]}"
+                    f"stderr: {(stderr or '').strip()[:2000]}\n"
+                    f"stdout: {(stdout or '').strip()[:2000]}"
                 )
             out_file = Path(out_path)
             return out_file.read_text(encoding="utf-8").strip() if out_file.exists() else stdout.strip()

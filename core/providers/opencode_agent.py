@@ -228,102 +228,96 @@ class OpenCodeAgent(ProviderAgentBase):
         if proc.returncode != 0:
             raise RuntimeError(
                 f"OpenCode CLI exited {proc.returncode} for role {self.role.value}.\n"
-                f"stderr: {(stderr or '').strip()[:2000]}"
+                f"stderr: {(stderr or '').strip()[:2000]}\n"
+                # The CLI reports its own failures as JSON on *stdout*
+                # ({"type":"error",...}) and usually leaves stderr empty, so
+                # omitting stdout here left every failure diagnosis-free.
+                f"stdout: {(stdout or '').strip()[:2000]}"
             )
 
         return self._parse_output(stdout)
 
     @staticmethod
     def _parse_output(stdout: str) -> tuple[str, list[dict[str, Any]]]:
-        """Extract the assistant text and any tool-call events from
-        `--format json` stdout.
+        return parse_jsonl_stream(stdout, "OpenCode CLI")
 
-        OpenCode outputs JSONL (one JSON object per line). We look for
-        the last message-type event with content for the text result, and
-        collect tool_use/tool_result events (best-effort, for observability
-        only — see execute()'s "Best-effort observability" comment).
-        """
-        raw = (stdout or "").strip()
-        if not raw:
-            return "", []
 
-        lines = raw.splitlines()
-        last_content = ""
-        tool_events: list[dict[str, Any]] = []
-        pending_tool_calls: dict[str, dict[str, Any]] = {}
+def parse_jsonl_stream(stdout: str, cli_name: str) -> tuple[str, list[dict[str, Any]]]:
+    """Parse OpenCode's `--format json` JSONL into (final_text, tool_events).
 
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                data = json.loads(line)
-            except json.JSONDecodeError:
-                # Not JSON — might be plain text output (skip raw JSONL lines)
-                if not line.startswith("{"):
-                    last_content = line
-                continue
+    Shared with KiloCodeAgent: Kilo's CLI is a fork of OpenCode and emits
+    this exact schema (its `--help` even prints an `opencode` banner), so
+    both providers parse the same stream. Verified against a live
+    `opencode run --format json`:
 
-            if not isinstance(data, dict):
-                continue
+        {"type":"step_start", "part":{...}}
+        {"type":"text",       "part":{"text":"..."}}
+        {"type":"tool_use",   "part":{"tool":"bash",
+                                      "state":{"status":"completed",
+                                               "input":{...},"output":"..."}}}
+        {"type":"step_finish","part":{...}}
+        {"type":"error",      "error":{"data":{"message":"..."}}}
 
-            # Record tool calls/results for observability, but they never
-            # contribute to the returned text (unchanged from before).
-            if data.get("type") == "tool_use":
-                call_id = data.get("id") or data.get("tool_use_id")
-                entry = {
-                    "tool": data.get("name") or data.get("tool") or "unknown",
-                    "input": data.get("input"),
-                    "output": None,
-                    "is_error": False,
-                }
-                tool_events.append(entry)
-                if call_id:
-                    pending_tool_calls[call_id] = entry
-                continue
-            if data.get("type") == "tool_result":
-                call_id = data.get("id") or data.get("tool_use_id")
-                target_entry = pending_tool_calls.get(call_id) if call_id else None
-                output = data.get("output") if "output" in data else data.get("content")
-                is_error = bool(data.get("is_error"))
-                if target_entry is not None:
-                    target_entry["output"] = output
-                    target_entry["is_error"] = is_error
-                else:
-                    tool_events.append({
-                        "tool": data.get("name") or data.get("tool") or "unknown",
-                        "input": None,
-                        "output": output,
-                        "is_error": is_error,
-                    })
-                continue
+    Every payload hangs off `part` — nothing useful lives at the top level
+    besides `type`. Each "text" event carries a full message rather than an
+    incremental delta, so the last one is the final answer.
+    """
+    raw = (stdout or "").strip()
+    if not raw:
+        return "", []
 
-            # Look for message events with content
-            if data.get("type") == "message" and data.get("content"):
-                content = data["content"]
-                # Filter out tool_use blocks from content
-                if isinstance(content, list):
-                    text_parts = [
-                        part.get("text", "")
-                        for part in content
-                        if isinstance(part, dict) and part.get("type") == "text"
-                    ]
-                    content = "\n".join(text_parts)
-                if content:
-                    last_content = content
+    last_text = ""
+    tool_events: list[dict[str, Any]] = []
+    error_message: str | None = None
+    saw_any_json = False
 
-            # Also handle simpler result format
-            elif data.get("result"):
-                last_content = data["result"]
-            elif data.get("text"):
-                last_content = data["text"]
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or not line.startswith("{"):
+            continue
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        saw_any_json = True
 
-        if last_content:
-            return last_content.strip(), tool_events
+        evt_type = data.get("type")
+        part = data.get("part") or {}
 
-        # Fallback: try to extract any text-looking content from the raw output
-        # Look for markdown-formatted content (common in agent outputs)
-        if "```" in raw or "# " in raw:
-            return raw, tool_events
+        if evt_type == "text":
+            text = part.get("text")
+            if isinstance(text, str) and text:
+                last_text = text
+        elif evt_type == "tool_use":
+            state = part.get("state") or {}
+            tool_events.append({
+                "tool": part.get("tool") or "unknown",
+                "input": state.get("input"),
+                "output": state.get("output"),
+                "is_error": state.get("status") == "error",
+            })
+        elif evt_type == "error":
+            err = data.get("error") or {}
+            msg = (err.get("data") or {}).get("message") or err.get("message")
+            if msg:
+                error_message = str(msg)
 
+    if error_message and not last_text:
+        raise RuntimeError(f"{cli_name} reported an error: {error_message}")
+
+    if last_text:
+        return last_text.strip(), tool_events
+
+    if saw_any_json:
+        # Valid JSONL stream but no text event (e.g. a tool-only run) —
+        # nothing more to extract. Returning "" rather than the raw stream
+        # matters: the caller writes this straight into the task's declared
+        # output files, and a JSONL blob there looks like a real document
+        # to every downstream agent.
         return "", tool_events
+
+    # Not JSON at all — plain text (e.g. --format ignored). Return as-is
+    # rather than silently dropping the output.
+    return raw, []

@@ -89,6 +89,7 @@ from cressida.core import AgentRole, MissionState, Task
 from cressida.core.paths import project_dir
 from cressida.core.events import EventBus
 from cressida.core.providers.base import ProviderAgentBase
+from cressida.core.providers.opencode_agent import parse_jsonl_stream
 # Reuse the proven, platform-correct process-tree kill (kills the whole
 # cmd.exe -> node.exe chain, not just the direct child) so a timed-out
 # `kilo run` cannot leave an orphaned agent still editing the project.
@@ -278,75 +279,6 @@ class KiloCodeAgent(ProviderAgentBase):
 
     @staticmethod
     def _parse_output(stdout: str) -> tuple[str, list[dict[str, Any]]]:
-        """Extract the final assistant text and any tool-call events from
-        Kilo's `--format json` stdout (one JSON object per line).
-
-        Observed event shapes (from a locally installed `kilo` v7.4.20):
-            {"type":"step_start", "part":{"type":"step-start", ...}}
-            {"type":"text", "part":{"type":"text","text":"...", ...}}
-            {"type":"tool_use", "part":{"type":"tool","tool":"bash",
-                "state":{"status":"completed"|"error","input":{...},"output":"..."}}}
-            {"type":"step_finish", "part":{"type":"step-finish","reason":"stop"|"tool-calls", ...}}
-            {"type":"error", "error":{"data":{"message":"..."}}}
-
-        Each "text" event carries a full message (not an incremental
-        delta), so the last one in the stream is the final answer — mirrors
-        OpenCodeAgent._parse_output's "last_content wins" approach.
-        """
-        raw = (stdout or "").strip()
-        if not raw:
-            return "", []
-
-        last_text = ""
-        tool_events: list[dict[str, Any]] = []
-        error_message: str | None = None
-        saw_any_json = False
-
-        for line in raw.splitlines():
-            line = line.strip()
-            if not line or not line.startswith("{"):
-                continue
-            try:
-                data = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(data, dict):
-                continue
-            saw_any_json = True
-
-            evt_type = data.get("type")
-            part = data.get("part") or {}
-
-            if evt_type == "text":
-                text = part.get("text")
-                if isinstance(text, str) and text:
-                    last_text = text
-            elif evt_type == "tool_use":
-                state = part.get("state") or {}
-                tool_events.append({
-                    "tool": part.get("tool") or "unknown",
-                    "input": state.get("input"),
-                    "output": state.get("output"),
-                    "is_error": state.get("status") == "error",
-                })
-            elif evt_type == "error":
-                err = data.get("error") or {}
-                msg = (err.get("data") or {}).get("message") or err.get("message")
-                if msg:
-                    error_message = str(msg)
-
-        if error_message and not last_text:
-            raise RuntimeError(f"Kilo Code CLI reported an error: {error_message}")
-
-        if last_text:
-            return last_text.strip(), tool_events
-
-        if saw_any_json:
-            # Valid JSONL stream but no text event found (e.g. a tool-only
-            # run) — nothing more useful to extract.
-            return "", tool_events
-
-        # Not JSON at all — plain-text fallback (e.g. `--format` defaulted
-        # or the CLI printed something unexpected); return as-is rather
-        # than silently dropping output.
-        return raw, []
+        # Kilo's CLI is a fork of OpenCode and emits OpenCode's JSONL schema
+        # verbatim, so both providers share one parser (see its docstring).
+        return parse_jsonl_stream(stdout, "Kilo Code CLI")
