@@ -187,7 +187,7 @@ class KiloCodeAgent(ProviderAgentBase):
 
         # Kilo has no separate system-prompt flag, so (like OpenCodeAgent)
         # the agent spec is prepended to the task prompt.
-        full_prompt = f"[Agent Spec: {self.role.value}]\n\n{system_prompt}\n\n---\n\n[Task]\n\n{user_prompt}"
+        full_prompt = f"[Agent Spec: {self.role.value}]\n\n{system_prompt}\n\n---\n\n[Task]\n\n{user_prompt}\n\n{self._artifact_boundary_prompt(state, task)}"
 
         text, tool_events = await self._invoke(full_prompt, project_dir(state))
 
@@ -208,6 +208,24 @@ class KiloCodeAgent(ProviderAgentBase):
 
         self._write_output(state.mission_id, task, text)
         return text
+
+    @staticmethod
+    def _artifact_boundary_prompt(state: MissionState, task: Task) -> str:
+        writes = task.metadata.get("writes") or []
+        if not writes:
+            return ""
+        files = "\n".join(f"- {path}" for path in writes)
+        return (
+            "## Cressida Artifact Boundary — mandatory\n"
+            "Your native Kilo filesystem tools are sandboxed to the target project. "
+            "Do not use native read/glob/write tools on the Cressida mission directory. "
+            "Use the connected Cressida MCP tools `read_mission_file` and "
+            "`write_mission_file` for mission artifacts, with this mission_id and a "
+            "mission-relative filename. Publish every declared artifact before ending:\n"
+            f"mission_id: `{state.mission_id}`\n{files}\n"
+            "If those MCP tools are unavailable, do not probe the mission path; return "
+            "the complete artifact contents in your final response so Cressida can persist them."
+        )
 
     # ── CLI invocation ──────────────────────────────────────────────────────
 

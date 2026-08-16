@@ -53,6 +53,7 @@ mcp = FastMCP(
         "Use run_mission to start a new project from a plain-English brief. "
         "Use mission_status to check progress. "
         "Use read_mission_file to inspect outputs. "
+        "Use write_mission_file to create or update artifacts for the active mission. "
         "Use resolve_escalation when BOND requests a human decision."
         " When starting a mission, pass the calling CLI identity as invoker "
         "(claude_cli, opencode, kilocode, or codex); use provider=auto only "
@@ -124,6 +125,15 @@ def _missions_dir() -> Path:
 
 def _mission_path(mission_id: str) -> Path:
     return _missions_dir() / mission_id
+
+
+def _mission_artifact_path(mission_id: str, filename: str) -> Path:
+    """Resolve a relative artifact path without allowing mission escape."""
+    root = _mission_path(mission_id).resolve()
+    candidate = (root / filename).resolve()
+    if candidate == root or root not in candidate.parents:
+        raise ValueError("filename must stay inside the mission directory")
+    return candidate
 
 
 def _load_execution_state(mission_id: str) -> dict:
@@ -606,7 +616,10 @@ def read_mission_file(mission_id: str, filename: str) -> str:
     Returns:
         File contents as text.
     """
-    target = _mission_path(mission_id) / filename
+    try:
+        target = _mission_artifact_path(mission_id, filename)
+    except ValueError as exc:
+        return f"Invalid mission filename: {exc}"
     if not target.exists():
         # List what's actually there to help the caller
         mpath = _mission_path(mission_id)
@@ -615,6 +628,30 @@ def read_mission_file(mission_id: str, filename: str) -> str:
         files = [str(f.relative_to(mpath)) for f in mpath.rglob("*") if f.is_file()]
         return f"File {filename!r} not found in mission {mission_id}.\n\nAvailable files:\n" + "\n".join(sorted(files))
     return target.read_text(encoding="utf-8", errors="replace")
+
+
+@mcp.tool()
+def write_mission_file(mission_id: str, filename: str, content: str) -> str:
+    """Write an artifact inside the active mission directory.
+
+    CLI providers run with the target project as their native-tool sandbox,
+    while mission artifacts live elsewhere. This tool gives OpenCode and Kilo
+    a provider-neutral way to publish research, PRDs, architecture, and review
+    files without attempting to escape their project root with native tools.
+    """
+    mission = _mission_path(mission_id)
+    if not mission.exists():
+        return f"Mission {mission_id!r} not found."
+    try:
+        target = _mission_artifact_path(mission_id, filename)
+    except ValueError as exc:
+        return f"Invalid mission filename: {exc}"
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    except OSError as exc:
+        return f"ERROR writing {target}: {exc}"
+    return f"Written {len(content)} chars to {target}"
 
 
 @mcp.tool()
