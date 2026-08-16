@@ -13,6 +13,7 @@ import json
 import pytest
 
 import cressida.mcp_server as mcp_server
+from cressida.core.types import AgentRole
 from cressida.core.paths import InvalidMissionIdError, mission_dir
 from cressida.core.progress import get_mission_progress
 from cressida.core.tools.implementations import execute_tool
@@ -198,3 +199,55 @@ def test_write_guard_still_fails_a_stale_task(tmp_path, monkeypatch):
     (tmp_path / "missions" / "m_old" / "old.md").write_text("x", encoding="utf-8")
     future = datetime.now() + timedelta(hours=1)
     assert _wrote_files_since("m_old", future) is False
+
+
+def test_timeout_writes_a_partial_output_log(tmp_path, monkeypatch):
+    """A timed-out CLI must leave its partial output on disk.
+
+    Observed live: REVIEW hit the 3600s provider timeout and the only record
+    was the sentence "OpenCode CLI timed out after 3600.0s" — an hour of work
+    with nothing to say what it had been doing.
+    """
+    import subprocess
+
+    from cressida.core.providers.opencode_agent import OpenCodeAgent
+
+    monkeypatch.setenv("CRESSIDA_MISSIONS_DIR", str(tmp_path / "missions"))
+    (tmp_path / "missions" / "m_timeout").mkdir(parents=True)
+
+    class _HangingPopen:
+        returncode = None
+
+        def __init__(self, *a, **k):
+            self.stdout = self.stderr = self.stdin = None
+            self._drained = False
+
+        def communicate(self, input=None, timeout=None):
+            if not self._drained:          # first call: the run times out
+                self._drained = True
+                raise subprocess.TimeoutExpired(cmd="opencode", timeout=timeout or 1)
+            return ("partial stdout from the killed run", "")   # post-kill drain
+
+        def wait(self, timeout=None):
+            return -1
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(subprocess, "Popen", _HangingPopen)
+    monkeypatch.setattr(
+        "cressida.core.providers.opencode_agent._terminate_process_tree", lambda proc: None
+    )
+
+    agent = OpenCodeAgent.__new__(OpenCodeAgent)
+    agent._cli = "opencode"
+    agent._model = ""
+    agent._timeout = 1
+    agent.role = AgentRole.REVIEW
+
+    with pytest.raises(RuntimeError, match="timed out"):
+        agent._invoke_blocking("prompt", tmp_path, "m_timeout", "review")
+
+    logs = list((tmp_path / "missions" / "m_timeout" / "logs").glob("review_*.log"))
+    assert len(logs) == 1, logs
+    assert "partial stdout from the killed run" in logs[0].read_text(encoding="utf-8")

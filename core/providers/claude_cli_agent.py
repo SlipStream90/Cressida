@@ -1068,6 +1068,20 @@ class ClaudeCLIAgent(ProviderAgentBase):
         return raw
 
 
+def _as_text(value: object) -> str:
+    """Best-effort str for partially-drained pipe output.
+
+    A killed process's pipes can hand back bytes (or nothing) depending on how
+    far the drain got, and this runs on the path that logs a failure — it must
+    not raise while trying to record why something else went wrong.
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value).decode("utf-8", errors="replace")
+    return "" if value is None else str(value)
+
+
 def write_cli_failure_log(
     mission_id: str | None, task_id: str | None, cmd: list[str],
     returncode: int, stdout: str | None, stderr: str | None,

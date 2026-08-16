@@ -43,6 +43,7 @@ from cressida.core.paths import project_dir
 from cressida.core.events import EventBus
 from cressida.core.providers.base import ProviderAgentBase, cli_lock
 from cressida.core.providers.claude_cli_agent import (
+    _as_text,
     _terminate_process_tree,
     write_cli_failure_log,
 )
@@ -258,6 +259,17 @@ class OpenCodeAgent(ProviderAgentBase):
             stdout, stderr = proc.communicate(input=prompt, timeout=self._timeout)
         except subprocess.TimeoutExpired as exc:
             _terminate_process_tree(proc)
+            # Collect whatever the CLI managed to emit before it was killed.
+            # A timed-out agent otherwise leaves no diagnostic at all — and a
+            # timeout is precisely when you most want to know what it was
+            # doing for the last hour. communicate() after the kill drains the
+            # pipes; the partial JSONL is usually enough to see where it stalled.
+            partial_out = partial_err = ""
+            try:
+                partial_out, partial_err = proc.communicate(timeout=10)
+            except Exception:
+                partial_out = getattr(exc, "stdout", "") or ""
+                partial_err = getattr(exc, "stderr", "") or ""
             try:
                 proc.wait(timeout=5)
             except Exception:
@@ -269,8 +281,13 @@ class OpenCodeAgent(ProviderAgentBase):
                             _pipe.close()
                     except Exception:
                         pass
+            log_path = write_cli_failure_log(
+                mission_id, task_id, cmd, -1,
+                _as_text(partial_out), _as_text(partial_err),
+            )
             raise RuntimeError(
-                f"OpenCode CLI timed out after {self._timeout}s for role {self.role.value}."
+                f"OpenCode CLI timed out after {self._timeout}s for role {self.role.value}.\n"
+                f"Partial output: {log_path}"
             ) from exc
 
         if proc.returncode != 0:

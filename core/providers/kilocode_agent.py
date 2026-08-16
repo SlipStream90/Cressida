@@ -94,6 +94,7 @@ from cressida.core.providers.opencode_agent import parse_jsonl_stream
 # cmd.exe -> node.exe chain, not just the direct child) so a timed-out
 # `kilo run` cannot leave an orphaned agent still editing the project.
 from cressida.core.providers.claude_cli_agent import (
+    _as_text,
     _terminate_process_tree,
     write_cli_failure_log,
 )
@@ -287,8 +288,16 @@ class KiloCodeAgent(ProviderAgentBase):
             # into the mission's project dir after we've declared the task dead.
             # Kill the whole tree and reap it so its stdout pipe closes and the
             # handles are released before we raise.
+            partial_out = partial_err = ""
             try:
                 _terminate_process_tree(proc)
+                # Drain whatever it emitted before the kill — a timeout is
+                # exactly when you want to know what it spent the hour doing.
+                try:
+                    partial_out, partial_err = proc.communicate(timeout=10)
+                except Exception:
+                    partial_out = getattr(exc, "stdout", "") or ""
+                    partial_err = getattr(exc, "stderr", "") or ""
                 proc.wait(timeout=5)
             except Exception:
                 pass
@@ -299,8 +308,13 @@ class KiloCodeAgent(ProviderAgentBase):
                             _pipe.close()
                     except Exception:
                         pass
+            log_path = write_cli_failure_log(
+                mission_id, task_id, cmd, -1,
+                _as_text(partial_out), _as_text(partial_err),
+            )
             raise RuntimeError(
-                f"Kilo Code CLI timed out after {self._timeout}s for role {self.role.value}."
+                f"Kilo Code CLI timed out after {self._timeout}s for role {self.role.value}.\n"
+                f"Partial output: {log_path}"
             ) from exc
 
         if proc.returncode != 0:

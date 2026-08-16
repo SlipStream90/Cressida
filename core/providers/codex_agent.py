@@ -36,6 +36,7 @@ from cressida.core.paths import cressida_home, project_dir
 from cressida.core.events import EventBus
 from cressida.core.providers.base import ProviderAgentBase
 from cressida.core.providers.claude_cli_agent import (
+    _as_text,
     _terminate_process_tree,
     write_cli_failure_log,
 )
@@ -204,6 +205,14 @@ class CodexAgent(ProviderAgentBase):
             return out_file.read_text(encoding="utf-8").strip() if out_file.exists() else stdout.strip()
         except subprocess.TimeoutExpired as exc:
             _terminate_process_tree(proc)
+            # Drain whatever it emitted before the kill; a timeout with no
+            # record at all is the least diagnosable failure there is.
+            partial_out = partial_err = ""
+            try:
+                partial_out, partial_err = proc.communicate(timeout=10)
+            except Exception:
+                partial_out = getattr(exc, "stdout", "") or ""
+                partial_err = getattr(exc, "stderr", "") or ""
             try:
                 proc.wait(timeout=5)
             except Exception:
@@ -215,8 +224,13 @@ class CodexAgent(ProviderAgentBase):
                             _pipe.close()
                     except Exception:
                         pass
+            log_path = write_cli_failure_log(
+                mission_id, task_id, cmd, -1,
+                _as_text(partial_out), _as_text(partial_err),
+            )
             raise RuntimeError(
-                f"Codex CLI timed out after {self._timeout}s for role {self.role.value}."
+                f"Codex CLI timed out after {self._timeout}s for role {self.role.value}.\n"
+                f"Partial output: {log_path}"
             ) from exc
         finally:
             try:
