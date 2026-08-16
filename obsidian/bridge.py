@@ -414,16 +414,33 @@ class ObsidianBridge:
         """Full-text keyword search across the entire vault."""
         return search_vault(self.vault, query, max_results=max_results)
 
+    def vault_path(self, relative_path: str) -> Path:
+        """Resolve a vault-relative path, refusing anything that escapes the
+        vault.
+
+        These paths arrive from MCP tool arguments — i.e. from the model,
+        which routinely acts on text it fetched from the web. Joining them
+        onto the vault root unchecked made ``../`` a read (and, via
+        obsidian_write, a write) anywhere on the filesystem.
+        """
+        base = self.vault.resolve()
+        target = (base / relative_path).resolve()
+        if target != base and base not in target.parents:
+            raise ValueError(
+                f"Refusing to touch a path outside the vault: {relative_path!r}"
+            )
+        return target
+
     def read_note(self, relative_path: str) -> str:
         """Read a note by its vault-relative path. Returns '' if not found."""
-        p = self.vault / relative_path
+        p = self.vault_path(relative_path)
         if not p.exists():
             return ""
         return p.read_text(encoding="utf-8", errors="replace")
 
     def list_notes(self, subfolder: str = "") -> list[str]:
         """List all .md file paths under vault/subfolder, relative to vault root."""
-        base = self.vault / subfolder if subfolder else self.vault
+        base = self.vault_path(subfolder) if subfolder else self.vault
         if not base.exists():
             return []
         return sorted(str(f.relative_to(self.vault)) for f in base.rglob("*.md"))

@@ -364,4 +364,13 @@ def execute_tool(name: str, inputs: dict[str, Any], mission_id: str = "") -> str
     impl = _IMPLEMENTATIONS.get(name)
     if impl is None:
         return f"Unknown tool: '{name}'. Available: {list(_IMPLEMENTATIONS)}"
-    return impl(**inputs, mission_id=mission_id)
+    try:
+        return impl(**inputs, mission_id=mission_id)
+    except TypeError as exc:
+        # Bad arguments from the model (missing/unknown key, or a literal
+        # "mission_id" in inputs colliding with the one passed here) used to
+        # raise straight through the agentic loop and fail the whole task.
+        # Returned as a tool result instead, so the model can see the mistake
+        # and correct it on the next round — the same way an unknown tool
+        # name is already handled above.
+        return f"ERROR calling tool '{name}' with {sorted(inputs)}: {exc}"

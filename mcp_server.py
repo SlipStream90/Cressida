@@ -101,7 +101,33 @@ def _missions_dir() -> Path:
 
 
 def _mission_path(mission_id: str) -> Path:
-    return _missions_dir() / mission_id
+    """Mission directory for an id that came from the model.
+
+    Same validation as core.paths.mission_dir — an id with separators or
+    parent references would otherwise resolve outside the missions tree, and
+    every tool below builds its paths from this one.
+    """
+    mid = str(mission_id).strip()
+    if (
+        not mid or mid in (".", "..")
+        or "/" in mid or "\\" in mid or ":" in mid or mid.startswith("~")
+    ):
+        raise ValueError(
+            f"Invalid mission_id {mission_id!r}: expected a single directory name."
+        )
+    return _missions_dir() / mid
+
+
+def _mission_file(mission_id: str, filename: str) -> Path:
+    """Resolve a mission-relative filename, refusing anything that escapes the
+    mission directory (``../``, an absolute path, a symlink pointing out)."""
+    base = _mission_path(mission_id).resolve()
+    target = (base / filename).resolve()
+    if target != base and base not in target.parents:
+        raise ValueError(
+            f"Refusing to read outside mission {mission_id}: {filename!r}"
+        )
+    return target
 
 
 def _load_execution_state(mission_id: str) -> dict:
@@ -544,7 +570,7 @@ def mission_status(mission_id: str) -> str:
     # Terminal states aren't "stalled", they're just done (or blocked pending
     # a human, which pending_escalations/bond_gate_blocked above already
     # surfaces) — only flag staleness while still nominally running.
-    if result["status"] not in ("completed", "COMPLETED", "failed", "FAILED", "ESCALATED"):
+    if str(result["status"]).lower() not in ("completed", "failed", "escalated", "cancelled"):
         staleness = _mission_staleness_seconds(mission_id)
         if staleness is not None and staleness >= _STALL_SECONDS:
             result["stalled"] = True
@@ -567,7 +593,13 @@ def list_missions() -> str:
             continue
         state = _load_execution_state(d.name)
         tasks = state.get("tasks", {})
-        statuses = [t.get("status") for t in tasks.values()]
+        # Lowercased on read: TaskStatus/MissionStatus serialize as
+        # UPPERCASE ("COMPLETED"), while the backlog writer
+        # (orchestration/executor._persist_state) writes lowercase. Comparing
+        # raw values against lowercase literals matched neither the enum
+        # writer nor, therefore, any real mission: every mission reported
+        # "unknown", and `stalled` (computed only for "running") never ran.
+        statuses = [str(t.get("status", "")).lower() for t in tasks.values()]
         overall = (
             "completed" if all(s == "completed" for s in statuses) and statuses
             else "failed" if any(s == "failed" for s in statuses)
@@ -608,7 +640,7 @@ def read_mission_file(mission_id: str, filename: str) -> str:
     Returns:
         File contents as text.
     """
-    target = _mission_path(mission_id) / filename
+    target = _mission_file(mission_id, filename)
     if not target.exists():
         # List what's actually there to help the caller
         mpath = _mission_path(mission_id)
@@ -680,7 +712,13 @@ def cressida_status() -> str:
             continue
         state = _load_execution_state(d.name)
         tasks = state.get("tasks", {})
-        statuses = [t.get("status") for t in tasks.values()]
+        # Lowercased on read: TaskStatus/MissionStatus serialize as
+        # UPPERCASE ("COMPLETED"), while the backlog writer
+        # (orchestration/executor._persist_state) writes lowercase. Comparing
+        # raw values against lowercase literals matched neither the enum
+        # writer nor, therefore, any real mission: every mission reported
+        # "unknown", and `stalled` (computed only for "running") never ran.
+        statuses = [str(t.get("status", "")).lower() for t in tasks.values()]
         overall = (
             "completed" if all(s == "completed" for s in statuses) and statuses
             else "failed" if any(s == "failed" for s in statuses)
@@ -770,7 +808,7 @@ def obsidian_write(note_path: str, content: str, tags: str = "") -> str:
         Confirmation with the full file path written.
     """
     bridge = _get_bridge()
-    target = bridge.vault / note_path
+    target = bridge.vault_path(note_path)
     target.parent.mkdir(parents=True, exist_ok=True)
 
     tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []

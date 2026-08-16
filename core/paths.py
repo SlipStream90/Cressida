@@ -82,8 +82,36 @@ def default_vault_dir() -> Path:
     return _env_path("CRESSIDA_VAULT_DIR") or (cressida_home() / "vault")
 
 
+class InvalidMissionIdError(ValueError):
+    """Raised when a mission_id is not a single, safe directory name."""
+
+
 def mission_dir(mission_id: str) -> Path:
-    return missions_root() / mission_id
+    """Directory for one mission. ``mission_id`` must be a bare directory name.
+
+    Validated here rather than at each call site because every reader of a
+    mission tree funnels through this function, and several of them take the
+    id straight from an untrusted caller: the dashboard serves
+    ``/api/missions/<id>`` over HTTP, and the MCP tools take it from the
+    model. Unvalidated, ``mission_dir("../../..")`` resolved to the user's
+    Desktop, which made ``get_mission_progress`` an arbitrary-directory
+    lister (and, via its recursive scan, a way to spin the server on a huge
+    tree).
+    """
+    mid = str(mission_id).strip()
+    if (
+        not mid
+        or mid in (".", "..")
+        or "/" in mid
+        or "\\" in mid
+        or ":" in mid
+        or mid.startswith("~")
+    ):
+        raise InvalidMissionIdError(
+            f"Invalid mission_id {mission_id!r}: expected a single directory name "
+            "with no path separators, drive letters, or parent references."
+        )
+    return missions_root() / mid
 
 
 # Directories a mission must never be pointed at. Agents now run with

@@ -73,9 +73,18 @@ class EventBus:
         if handler in handlers:
             handlers.remove(handler)
 
+    # Cap on retained events. The daemon (`cressida daemon`) runs indefinitely
+    # and every tool call of every task publishes here, so an unbounded list
+    # grows for the life of the process. The only readers ask for the last
+    # 500-1000 (StallMonitor, StatusServer); the durable record is
+    # live_events.jsonl on disk.
+    _MAX_HISTORY = 10000
+
     async def publish(self, event: Event) -> None:
         async with self._lock:
             self._history.append(event)
+            if len(self._history) > self._MAX_HISTORY:
+                del self._history[: len(self._history) - self._MAX_HISTORY]
             handlers = self._subscribers.get(event.type, [])
             for handler in handlers:
                 try:

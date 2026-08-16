@@ -119,8 +119,12 @@ function fmtSize(bytes) {
 }
 
 function statusClass(m) {
-  if (m.status === "completed") return "completed";
-  if (m.status === "failed") return "failed";
+  // Status values arrive UPPERCASE from the enum writer ("COMPLETED") and
+  // lowercase from the backlog writer — normalize before comparing, or a
+  // finished mission never gets its colour.
+  const s = (m.status || "").toLowerCase();
+  if (s === "completed") return "completed";
+  if (s === "failed" || s === "escalated") return "failed";
   if (m.stalled) return "stalled";
   return "";
 }
@@ -185,7 +189,7 @@ function render(missions) {
               <span class="id">${esc(m.mission_id)}</span>
               ${briefLine}
             </div>
-            <span class="badge ${cls}">${m.stalled ? "STALLED" : esc(m.status)}</span>
+            <span class="badge ${cls}">${m.stalled ? "STALLED" : esc((m.status || "unknown").toUpperCase())}</span>
           </div>
           <div class="phase-line">
             <span class="phase">${esc(m.phase)}</span>
@@ -258,7 +262,14 @@ class _Handler(BaseHTTPRequestHandler):
         pass
 
 
-def serve_dashboard(port: int = DEFAULT_DASHBOARD_PORT, host: str = "") -> HTTPServer:
+def serve_dashboard(port: int = DEFAULT_DASHBOARD_PORT, host: str = "127.0.0.1") -> HTTPServer:
+    """Bind loopback-only by default.
+
+    The previous default of "" bound every interface, publishing mission
+    briefs, task errors and file listings to anything that could reach the
+    machine — for a tool whose whole audience is the person at the keyboard.
+    Pass host="0.0.0.0" deliberately if you want it on the network.
+    """
     return HTTPServer((host, port), _Handler)
 
 

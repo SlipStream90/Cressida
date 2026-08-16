@@ -72,9 +72,19 @@ def _list_escalations(mission_path: Path) -> list[str]:
     return sorted(f.name for f in esc_dir.iterdir() if f.suffix == ".json" and f.stem != "resolution")
 
 
+_MAX_SCANNED_FILES = 5000
+
+
 def _scan_files(mission_path: Path) -> list[dict[str, Any]]:
     files = []
+    # ponytail: flat cap on the walk. The dashboard re-scans every mission
+    # every 2.5s, and a mission whose tree picked up a node_modules/ or a
+    # build dir otherwise costs a full recursive stat sweep per poll. Only
+    # the 15 most recent files are ever displayed. Swap for an mtime index
+    # if a real need for complete counts on huge trees shows up.
     for f in mission_path.rglob("*"):
+        if len(files) >= _MAX_SCANNED_FILES:
+            break
         if not f.is_file():
             continue
         try:
@@ -99,7 +109,13 @@ def get_mission_progress(mission_id: str) -> dict[str, Any]:
     completes — the gap plain ``mission_status`` has while a mission is still
     in its pre-task research/PRD phase.
     """
-    mission_path = mission_dir(mission_id)
+    try:
+        mission_path = mission_dir(mission_id)
+    except ValueError:
+        # Rejected id (path separators / parent refs) — same answer as a
+        # mission that isn't there, so the HTTP dashboard returns JSON rather
+        # than a 500 with a traceback.
+        return {"mission_id": mission_id, "found": False}
     if not mission_path.exists():
         return {"mission_id": mission_id, "found": False}
 

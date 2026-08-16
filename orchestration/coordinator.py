@@ -71,6 +71,14 @@ class Coordinator:
 
     async def run_mission(self, state: MissionState, shared: SharedState | None = None) -> MissionState:
         state.status = MissionStatus.IN_PROGRESS
+        # Persist immediately, not just at the first batch boundary. The
+        # mission's first task can run for many minutes, and until this write
+        # execution_state.json still says PENDING (cli._persist_initial_state
+        # writes that before handing over) — so a running mission was
+        # indistinguishable on disk from one that never started, and anything
+        # keying off IN_PROGRESS (mission_status, the duplicate-run guard in
+        # mcp_server.run_mission) saw the wrong answer for the whole first task.
+        self._persist_state(state)
         await self._event_bus.publish(
             Event(type=EventType.MISSION_STARTED, data={"mission_id": state.mission_id, "brief": state.brief}, source="coordinator")
         )

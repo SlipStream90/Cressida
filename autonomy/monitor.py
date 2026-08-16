@@ -175,7 +175,10 @@ class StatusServer:
                 pass
 
         try:
-            server = HTTPServer(("", port), _Handler)
+            # Loopback only: the printed URL is localhost and the audience is
+            # the person running the daemon. "" published mission ids and task
+            # state to every interface on the machine.
+            server = HTTPServer(("127.0.0.1", port), _Handler)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             print(f"[STATUS] HTTP status server running on http://localhost:{port}/status")
