@@ -96,6 +96,7 @@ def _register_opencode(cfg: dict) -> bool:
     data.setdefault("mcp", {})["cressida"] = {
         "type": "local",
         "command": [cfg["command"], *cfg["args"]],
+        "environment": {"CRESSIDA_INVOKER": "opencode"},
         "enabled": True,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -158,6 +159,32 @@ def _install_skills() -> list[str]:
         dest_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy(src, dest_dir / "SKILL.md")
         installed.append(client)
+
+    # OpenCode has no skill directory, so put the equivalent provider-aware
+    # instruction in its global AGENTS.md. Preserve existing user content and
+    # replace only the Cressida block on repeated onboarding runs.
+    opencode_agents = Path.home() / ".config" / "opencode" / "AGENTS.md"
+    if opencode_agents.parent.exists():
+        marker = "## Cressida"
+        end_marker = "<!-- END CRESSIDA -->"
+        block = (
+            "## Cressida\n\n"
+            "For project-sized builds, call the `cressida` MCP server. Because "
+            "this is OpenCode, call `run_mission` with `invoker=\"opencode\"` "
+            "and `provider=\"auto\"` unless the user explicitly requests a "
+            "different provider. Pass the target `project_dir` explicitly.\n\n"
+            f"{end_marker}\n"
+        )
+        try:
+            existing = opencode_agents.read_text(encoding="utf-8") if opencode_agents.exists() else ""
+            if marker in existing:
+                prefix = existing[:existing.index(marker)].rstrip()
+                suffix = existing[existing.find(end_marker) + len(end_marker):].lstrip() if end_marker in existing else ""
+                existing = prefix + ("\n\n" + suffix if suffix else "\n\n")
+            opencode_agents.write_text(existing + block, encoding="utf-8")
+            installed.append("opencode")
+        except OSError as exc:
+            print(f"  (couldn't update {opencode_agents}: {exc})")
     return installed
 
 

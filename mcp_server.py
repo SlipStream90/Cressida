@@ -70,6 +70,7 @@ def _provider_for_invoker(provider: str, invoker: str) -> str:
     """
     if provider.strip().lower() != "auto":
         return provider
+    invoker = invoker or os.environ.get("CRESSIDA_INVOKER", "")
     aliases = {
         "claude": "claude_cli", "claude-code": "claude_cli", "claude_cli": "claude_cli",
         "opencode": "opencode", "open-code": "opencode",

@@ -75,3 +75,8 @@ def test_mcp_invoker_identity_selects_matching_provider():
     assert _provider_for_invoker("auto", "kilo") == "kilocode"
     assert _provider_for_invoker("auto", "unknown") == "auto"
     assert _provider_for_invoker("claude_cli", "opencode") == "claude_cli"
+
+
+def test_mcp_invoker_identity_can_come_from_environment(monkeypatch):
+    monkeypatch.setenv("CRESSIDA_INVOKER", "opencode")
+    assert _provider_for_invoker("auto", "") == "opencode"
