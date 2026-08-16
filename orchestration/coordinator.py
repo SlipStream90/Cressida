@@ -96,6 +96,29 @@ class Coordinator:
                 tags=["scheduling", state.mission_id],
             )
 
+            # Resume overlays may mark BOND completed without replaying its
+            # batch. Re-check the durable approval before allowing any
+            # downstream planning or implementation task to run.
+            bond_task = state.tasks.get("bond_approve_plan")
+            downstream_pending = any(
+                task.status == TaskStatus.PENDING
+                and task.id not in {"research", "methodology_research", "product_definition", "architecture"}
+                for task in state.tasks.values()
+            )
+            if bond_task and bond_task.status == TaskStatus.COMPLETED and downstream_pending:
+                approved, detail = self._check_bond_gate(state)
+                if not approved:
+                    state.status = MissionStatus.ESCALATED
+                    state.metadata["bond_gate_blocked"] = detail
+                    self._persist_state(state)
+                    await self._event_bus.publish(
+                        Event(type=EventType.MISSION_FAILED, data={
+                            "mission_id": state.mission_id,
+                            "error": f"BOND gate blocked resumed planning/implementation: {detail}",
+                        }, source="coordinator")
+                    )
+                    return state
+
             for batch_idx, batch in enumerate(schedule.parallel_batches):
                 batch_tasks = [state.tasks[tid] for tid in batch if tid in state.tasks]
                 await self._execute_batch(batch_tasks, state, batch_idx, schedule)
