@@ -13,6 +13,7 @@ from cressida.core.types import AgentRole, MissionState, Task, TaskStatus, Prior
 from cressida.orchestration.context_builder import ContextBuilder
 from cressida.orchestration.dependency_graph import DependencyGraph
 from cressida.orchestration.router import RoutingError, TaskRouter
+from cressida.core.providers.base import declared_write_targets
 from cressida.core.providers.fallback import has_usable_output
 
 # Roles whose job is to persist files (not just return prose) — a mission
@@ -26,12 +27,26 @@ from cressida.core.providers.fallback import has_usable_output
 _VERIFY_FILES_WRITTEN_ROLES = {AgentRole.BRANCH}
 
 
-def _wrote_files_since(mission_id: str, since: datetime, target_dir: Path | None = None) -> bool:
+def _wrote_files_since(
+    mission_id: str, since: datetime, target_dir: Path | None = None,
+    ignore: set[Path] | None = None,
+) -> bool:
     """True if any file under the mission dir (or the mission's target project
-    dir, when given) was created/modified at or after `since`."""
+    dir, when given) was created/modified at or after `since`.
+
+    ``ignore`` excludes the task's own declared output files — the ones
+    ProviderAgentBase._write_output persists from the agent's closing message
+    *before* this check runs. Counting them made this guard validate its own
+    side effect: it could never fail, and the exact failure it exists to catch
+    walked straight through it. Observed live on
+    missions/20260816-small-url-shortener-service-03: BRANCH wrote no code at
+    all, the mission was marked COMPLETED, and REVIEW — reviewing nothing —
+    scored the delivery 2.0/10.
+    """
     # A little slack for filesystem mtime resolution / clock skew between the
     # agent subprocess and this process.
     cutoff = since.timestamp() - 2.0
+    ignored = {p.resolve() for p in (ignore or set())}
     dirs = [mission_dir(mission_id)]
     if target_dir is not None:
         dirs.append(target_dir)
@@ -41,6 +56,8 @@ def _wrote_files_since(mission_id: str, since: datetime, target_dir: Path | None
         for f in d.rglob("*"):
             if f.is_file():
                 try:
+                    if f.resolve() in ignored:
+                        continue
                     if f.stat().st_mtime >= cutoff:
                         return True
                 except OSError:
@@ -352,7 +369,8 @@ class TaskExecutor:
                     return
 
                 if role in _VERIFY_FILES_WRITTEN_ROLES and not _wrote_files_since(
-                    state.mission_id, task.started_at, project_dir(state)
+                    state.mission_id, task.started_at, project_dir(state),
+                    ignore=declared_write_targets(state.mission_id, task),
                 ):
                     task.status = TaskStatus.FAILED
                     task.completed_at = datetime.now()

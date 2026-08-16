@@ -54,6 +54,26 @@ def cli_lock(cli_name: str) -> "asyncio.Lock":
     return lock
 
 
+def declared_write_targets(mission_id: str, task: Task) -> set[Path]:
+    """The files ``_write_output`` will write for ``task``.
+
+    Shared with the executor's file-write verification: that check asks
+    whether an agent produced anything, and must not count the summary this
+    class persists on the agent's behalf — otherwise it validates its own
+    side effect and can never fail.
+    """
+    targets: set[Path] = set()
+    writes: list[str] = task.metadata.get("writes", []) or []
+    if not writes:
+        targets.add(mission_dir(mission_id) / "outputs" / f"{task.id}.md")
+        return targets
+    for write_path in writes:
+        resolved = write_path.replace("<mission_id>", mission_id)
+        p = resolve_mission_artifact_path(resolved, mission_id)
+        targets.add(p if p.suffix else (p / f"{task.id}.md"))
+    return targets
+
+
 class ProviderAgentBase(Agent):
     """Abstract base that handles spec loading, context building, and output writing.
 

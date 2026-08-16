@@ -141,3 +141,60 @@ def test_invoker_binds_an_auto_mission_to_the_calling_cli(monkeypatch):
     monkeypatch.setenv("CRESSIDA_INVOKER", "opencode")
     assert provider_for_invoker("auto", "") == "opencode"
     assert provider_for_invoker("auto", "codex") == "codex"  # argument beats env
+
+
+def test_write_guard_ignores_the_summary_it_writes_itself(tmp_path, monkeypatch):
+    """The BRANCH file-write check must not count the agent's own summary.
+
+    ProviderAgentBase._write_output persists the closing chat message to the
+    task's declared outputs *before* the executor asks "did this agent write
+    anything?". Counting that file made the guard validate its own side
+    effect, so it could never fail — and the failure it exists to catch went
+    through it: on a live mission BRANCH shipped no source code, the mission
+    was marked COMPLETED, and REVIEW scored the delivery 2.0/10.
+    """
+    from datetime import datetime, timedelta
+
+    from cressida.core.types import AgentRole, Task
+    from cressida.core.providers.base import declared_write_targets
+    from cressida.orchestration.executor import _wrote_files_since
+
+    monkeypatch.setenv("CRESSIDA_MISSIONS_DIR", str(tmp_path / "missions"))
+    mission_id = "m_guard"
+    project = tmp_path / "project"
+    project.mkdir()
+
+    task = Task(
+        id="implementation", name="Implementation", description="",
+        agent=AgentRole.BRANCH,
+        metadata={"writes": [f"missions/{mission_id}/implementation/"]},
+    )
+    started = datetime.now()
+    task.started_at = started
+
+    targets = declared_write_targets(mission_id, task)
+    assert targets, "task declares outputs"
+    for t in targets:                      # what _write_output would persist
+        t.parent.mkdir(parents=True, exist_ok=True)
+        t.write_text("Let me check the environment.", encoding="utf-8")
+
+    # Only the agent's own summary exists -> the agent produced nothing.
+    assert _wrote_files_since(mission_id, started, project, ignore=targets) is False
+    # Without the exclusion the guard passes on its own side effect.
+    assert _wrote_files_since(mission_id, started, project) is True
+
+    # Real code in the target project -> the guard passes.
+    (project / "main.py").write_text("app = 1\n", encoding="utf-8")
+    assert _wrote_files_since(mission_id, started, project, ignore=targets) is True
+
+
+def test_write_guard_still_fails_a_stale_task(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta
+
+    monkeypatch.setenv("CRESSIDA_MISSIONS_DIR", str(tmp_path / "missions"))
+    from cressida.orchestration.executor import _wrote_files_since
+
+    (tmp_path / "missions" / "m_old").mkdir(parents=True)
+    (tmp_path / "missions" / "m_old" / "old.md").write_text("x", encoding="utf-8")
+    future = datetime.now() + timedelta(hours=1)
+    assert _wrote_files_since("m_old", future) is False
