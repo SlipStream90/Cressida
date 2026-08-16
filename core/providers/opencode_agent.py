@@ -185,6 +185,19 @@ class OpenCodeAgent(ProviderAgentBase):
             self._cli,
             "run",
             "--format", "json",
+            # --auto auto-approves permissions the CLI would otherwise stop and
+            # ask about. It defaults to false, and without it an agent halts the
+            # moment it needs to write a file or run a command: observed live,
+            # every opencode task "succeeded" in ~30s having emitted a single
+            # sentence ("I'll start by researching...") and written nothing, so
+            # _write_output persisted that sentence as the task's declared
+            # artifact. There is no one to answer a prompt in a headless mission
+            # subprocess, so the only alternatives are this or a provider that
+            # can never do work. It matches the posture every other provider
+            # already takes (kilo --auto, codex -s workspace-write, claude_cli
+            # --permission-mode acceptEdits), and Coordinator._snapshot_project_dir
+            # takes a git restore point before any agent touches the project.
+            "--auto",
             "--dir", work_dir,
         ]
 
