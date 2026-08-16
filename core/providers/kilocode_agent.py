@@ -300,6 +300,7 @@ class KiloCodeAgent(ProviderAgentBase):
 
         last_text = ""
         tool_events: list[dict[str, Any]] = []
+        pending_tool_calls: dict[str, dict[str, Any]] = {}
         error_message: str | None = None
         saw_any_json = False
 
@@ -317,19 +318,58 @@ class KiloCodeAgent(ProviderAgentBase):
 
             evt_type = data.get("type")
             part = data.get("part") or {}
+            state = part.get("state") or data.get("state") or {}
 
             if evt_type == "text":
-                text = part.get("text")
+                text = part.get("text") or data.get("text")
                 if isinstance(text, str) and text:
                     last_text = text
             elif evt_type == "tool_use":
-                state = part.get("state") or {}
-                tool_events.append({
-                    "tool": part.get("tool") or "unknown",
-                    "input": state.get("input"),
-                    "output": state.get("output"),
-                    "is_error": state.get("status") == "error",
-                })
+                entry = {
+                    "tool": (
+                        part.get("tool") or part.get("name")
+                        or data.get("tool") or data.get("name") or "unknown"
+                    ),
+                    "input": state.get("input", data.get("input")),
+                    "output": state.get("output", data.get("output")),
+                    "is_error": bool(data.get("is_error")) or state.get("status") == "error",
+                }
+                tool_events.append(entry)
+                call_id = data.get("id") or data.get("tool_use_id") or part.get("id")
+                if call_id:
+                    pending_tool_calls[call_id] = entry
+            elif evt_type == "tool_result":
+                call_id = data.get("id") or data.get("tool_use_id") or part.get("id")
+                output = (
+                    state.get("output") if "output" in state
+                    else data.get("output") if "output" in data
+                    else data.get("content")
+                )
+                is_error = bool(data.get("is_error")) or state.get("status") == "error"
+                entry = pending_tool_calls.get(call_id) if call_id else None
+                if entry is not None:
+                    entry["output"] = output
+                    entry["is_error"] = is_error
+                else:
+                    tool_events.append({
+                        "tool": (
+                            part.get("tool") or part.get("name")
+                            or data.get("tool") or data.get("name") or "unknown"
+                        ),
+                        "input": None,
+                        "output": output,
+                        "is_error": is_error,
+                    })
+            elif evt_type == "message" and data.get("content"):
+                content = data["content"]
+                if isinstance(content, list):
+                    content = "\n".join(
+                        part.get("text", "")
+                        for part in content
+                        if isinstance(part, dict) and part.get("type") == "text"
+                    )
+                if content:
+                    last_text = content
             elif evt_type == "error":
                 err = data.get("error") or {}
                 msg = (err.get("data") or {}).get("message") or err.get("message")

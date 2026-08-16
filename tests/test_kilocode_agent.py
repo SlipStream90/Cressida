@@ -47,6 +47,18 @@ def test_parse_output_marks_errored_tool_call():
     assert events[0]["is_error"] is True
 
 
+def test_parse_output_accepts_flat_opencode_tool_shape():
+    lines = [
+        '{"type":"tool_use","id":"t1","name":"bash","input":{"cmd":"pwd"}}',
+        '{"type":"tool_result","id":"t1","output":"C:\\\\repo"}',
+        '{"type":"message","content":[{"type":"text","text":"finished"}]}',
+    ]
+    text, events = KiloCodeAgent._parse_output("\n".join(lines))
+    assert text == "finished"
+    assert events[0]["tool"] == "bash"
+    assert events[0]["input"] == {"cmd": "pwd"}
+
+
 def test_parse_output_raises_on_error_event_with_no_text():
     lines = [
         '{"type":"error","error":{"data":{"message":"boom"}}}',

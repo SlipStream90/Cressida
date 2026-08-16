@@ -41,7 +41,7 @@ Supports
 
 # Installation
 
-CRESSIDA supports macOS, Linux, Windows, WSL, Docker, and Homebrew — and automatically integrates with **Claude Code**, **opencode**, and **Codex** through MCP, registering itself as an auto-invoked skill in every client that supports one.
+CRESSIDA supports macOS, Linux, Windows, WSL, Docker, and Homebrew — and automatically integrates with **Claude Code**, **opencode**, **Kilo Code**, and **Codex** through MCP, registering itself as an auto-invoked skill in every client that supports one.
 
 ## Requirements
 
@@ -67,7 +67,7 @@ curl -fsSL https://raw.githubusercontent.com/SlipStream90/Cressida/MI6/install.s
 irm https://raw.githubusercontent.com/SlipStream90/Cressida/MI6/install.ps1 | iex
 ```
 
-Either installer clones CRESSIDA, creates an isolated virtual environment, installs dependencies, registers the MCP server with every client found on your machine (Claude Code, opencode, Codex), installs the auto-invoke skill into Claude Code and Codex, adds CLI commands, and verifies the installation. Restart whichever client(s) you use afterward.
+Either installer clones CRESSIDA, creates an isolated virtual environment, installs dependencies, registers the MCP server with every client found on your machine (Claude Code, opencode, Kilo Code, Codex), installs the auto-invoke skill into Claude Code and Codex, adds CLI commands, and verifies the installation. Restart whichever client(s) you use afterward.
 
 **Homebrew**
 
@@ -365,7 +365,7 @@ See `core/providers/gateway.py` for the exact per-role scoring table (a tunable 
 cressida --help          # run | watch | daemon | dashboard | resolve-escalation | status | learning | ...
 ```
 
-Inside Claude Code, opencode, or Codex, call `cressida_status` — expect:
+Inside Claude Code, opencode, Kilo Code, or Codex, call `cressida_status` — expect:
 
 ```
 ✓ MCP Server Connected
@@ -416,7 +416,7 @@ Every engineering decision is reproducible from what's on disk.
 |-------|----------|
 | CLI | One-off missions (`cressida run brief.md`) |
 | Watch | Live-tail a running mission's event log (`cressida watch`) — no console window or MCP polling needed |
-| MCP Server | Integrated directly into Claude Code / opencode / Codex |
+| MCP Server | Integrated directly into Claude Code / opencode / Kilo Code / Codex |
 | Daemon | Fully autonomous background execution |
 | Dashboard | Real-time mission monitoring |
 
@@ -430,7 +430,7 @@ cressida run brief.md --provider ollama --ollama-model qwen2.5
 
 # MCP Integration
 
-CRESSIDA registers as an MCP server with Claude Code, opencode, and Codex — once installed, every mission can be started without leaving your editor, in whichever of the three you use.
+CRESSIDA registers as an MCP server with Claude Code, opencode, Kilo Code, and Codex — once installed, every mission can be started without leaving your editor, in whichever of the four you use.
 
 Useful MCP tools: `run_mission()`, `mission_status()`, `mission_progress()`, `learning_playbook()`, `learning_nudge()`, `cressida_status()`
 
@@ -438,7 +438,7 @@ Useful MCP tools: `run_mission()`, `mission_status()`, `mission_progress()`, `le
 
 Claude Code and Codex both support **skills** — description-triggered instructions the agent consults automatically, without you naming CRESSIDA explicitly. `onboard.py --register` installs a `cressida` skill (`skills/cressida/SKILL.md`) into both, so a project-sized build request in an ordinary conversation gets delegated to a mission instead of built turn-by-turn in that session. It falls back to a direct build if the MCP server isn't connected, so a missing/misconfigured server never blocks the conversation.
 
-opencode has no skill mechanism yet, so it gets the equivalent instruction appended to its `AGENTS.md` context file instead.
+opencode and Kilo Code have no skill mechanism yet, so each gets the equivalent provider-aware instruction appended to its `AGENTS.md` context file instead.
 
 ---
 

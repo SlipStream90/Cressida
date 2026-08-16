@@ -270,28 +270,48 @@ class OpenCodeAgent(ProviderAgentBase):
             # Record tool calls/results for observability, but they never
             # contribute to the returned text (unchanged from before).
             if data.get("type") == "tool_use":
-                call_id = data.get("id") or data.get("tool_use_id")
+                part = data.get("part") or {}
+                state = part.get("state") or data.get("state") or {}
+                call_id = (
+                    data.get("id") or data.get("tool_use_id")
+                    or part.get("id") or part.get("tool_use_id")
+                )
                 entry = {
-                    "tool": data.get("name") or data.get("tool") or "unknown",
-                    "input": data.get("input"),
-                    "output": None,
-                    "is_error": False,
+                    "tool": (
+                        data.get("name") or data.get("tool")
+                        or part.get("name") or part.get("tool") or "unknown"
+                    ),
+                    "input": state.get("input", data.get("input")),
+                    "output": state.get("output"),
+                    "is_error": state.get("status") == "error",
                 }
                 tool_events.append(entry)
                 if call_id:
                     pending_tool_calls[call_id] = entry
                 continue
             if data.get("type") == "tool_result":
-                call_id = data.get("id") or data.get("tool_use_id")
+                part = data.get("part") or {}
+                state = part.get("state") or data.get("state") or {}
+                call_id = (
+                    data.get("id") or data.get("tool_use_id")
+                    or part.get("id") or part.get("tool_use_id")
+                )
                 target_entry = pending_tool_calls.get(call_id) if call_id else None
-                output = data.get("output") if "output" in data else data.get("content")
-                is_error = bool(data.get("is_error"))
+                output = (
+                    state.get("output") if "output" in state
+                    else data.get("output") if "output" in data
+                    else data.get("content")
+                )
+                is_error = bool(data.get("is_error")) or state.get("status") == "error"
                 if target_entry is not None:
                     target_entry["output"] = output
                     target_entry["is_error"] = is_error
                 else:
                     tool_events.append({
-                        "tool": data.get("name") or data.get("tool") or "unknown",
+                        "tool": (
+                            data.get("name") or data.get("tool")
+                            or part.get("name") or part.get("tool") or "unknown"
+                        ),
                         "input": None,
                         "output": output,
                         "is_error": is_error,
@@ -311,6 +331,14 @@ class OpenCodeAgent(ProviderAgentBase):
                     content = "\n".join(text_parts)
                 if content:
                     last_content = content
+
+            # Kilo emits text in a nested part; accept it here too so either
+            # OpenCode-family CLI can be selected without changing parsing.
+            elif data.get("type") == "text":
+                part = data.get("part") or {}
+                text = part.get("text") or data.get("text")
+                if text:
+                    last_content = text
 
             # Also handle simpler result format
             elif data.get("result"):
