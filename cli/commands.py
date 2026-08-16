@@ -431,6 +431,16 @@ async def run_mission(args: argparse.Namespace) -> int:
     _rehydrate_from_execution_state(state, mission_id)
     _persist_initial_state(state)
 
+    # Keep the brief with the mission. Only the MCP path wrote this, so a
+    # CLI-launched mission had no brief.md — leaving core/progress.py (and so
+    # the dashboard) with no "Brief received" milestone, no brief preview and
+    # no start time, all three of which key off this file. Never overwrites,
+    # so a resume can't replace the original brief with a shorter one.
+    brief_file = mission_dir(mission_id) / "brief.md"
+    if not brief_file.exists():
+        brief_file.parent.mkdir(parents=True, exist_ok=True)
+        brief_file.write_text(brief, encoding="utf-8")
+
     coordinator = Coordinator(registry, event_bus, memory)
     shared = SharedState()
     shared.mission = type(shared.mission)(mission_id=mission_id, brief=brief)

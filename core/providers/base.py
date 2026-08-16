@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 """Shared base class for all provider-specific LLM agents.
 
 Provider agents (OpenAI, Gemini, Groq, Ollama) inherit from ProviderAgentBase
@@ -25,6 +27,31 @@ from cressida.orchestration.context_builder import ContextBuilder
 
 
 _MAX_TOOL_ROUNDS = 40
+
+
+# One in-flight invocation per CLI, process-wide.
+#
+# OpenCode (and Kilo, its fork) keep session state in a SQLite database under
+# the user's data dir, shared by every invocation of that CLI. Cressida runs a
+# DAG batch in parallel — methodology_research and product_definition fire
+# together — so two `opencode run` processes hit that database at once and one
+# dies with "Error: Unexpected error / database is locked", failing a task for
+# reasons that have nothing to do with its prompt.
+#
+# ponytail: a coarse per-CLI lock, so a batch of N tasks on one CLI runs
+# serially instead of failing. Parallelism across *different* providers (and
+# every API-based provider) is unaffected. If per-session isolation ever lands
+# in these CLIs, drop the lock.
+_CLI_LOCKS: dict[str, "asyncio.Lock"] = {}
+
+
+def cli_lock(cli_name: str) -> "asyncio.Lock":
+    """The process-wide lock serializing invocations of one CLI."""
+    lock = _CLI_LOCKS.get(cli_name)
+    if lock is None:
+        lock = asyncio.Lock()
+        _CLI_LOCKS[cli_name] = lock
+    return lock
 
 
 class ProviderAgentBase(Agent):

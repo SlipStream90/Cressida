@@ -78,12 +78,14 @@ brew tap SlipStream90/cressida && brew install cressida
 ## Manual Installation
 
 ```bash
-git clone https://github.com/SlipStream90/Cressida.git
+git clone -b MI6 https://github.com/SlipStream90/Cressida.git
 cd Cressida
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 python onboard.py --provider anthropic --register
 ```
+
+> **MI6 is the installation branch.** The one-line installers above already pull from it; clone it explicitly for a manual or development install.
 
 `--register` configures MCP and installs the auto-invoke skill for every client found on your machine, verifies providers, and prints manual registration commands for anything it couldn't reach automatically.
 
@@ -294,7 +296,7 @@ Every mission — headless (e.g. driven from opencode or Claude Code via MCP) or
 
 ```bash
 cressida watch                      # auto-attaches to the most recently active mission
-cressida watch mission_20260810_1200 --tail 30 --poll-interval 0.5
+cressida watch 20260810-url-shortener-01 --tail 30 --poll-interval 0.5
 ```
 
 It shows the mission's current phase, a scrolling tail of recent events (including which tool is running right now, e.g. `-> BRANCH calling bash({"command": "npm test"})`), and a "Ns since last event" heartbeat — so a long-running task reads as "still working on X" instead of looking indistinguishable from a hang. This works across every provider — the native Anthropic agent and the OpenAI/Gemini/Groq/Ollama providers stream it directly from their own tool-use loop, and the CLI-subprocess providers (Claude Code, OpenCode, Codex, Kilo Code) surface it from their own JSON/JSONL event streams where the underlying CLI exposes one. It's purely observational: the extra events are published on a best-effort side channel that can never change a task's result, output, or control flow, under any provider. When Cressida spawns a mission via its MCP server, three ways to watch it coexist, and you can use any combination: `cressida watch <mission_id>` is the primary, always-available live view; `mission_status(mission_id)` still works for plain polling; and passing `show_window=true` to `run_mission` also opens a visible console window with the mission subprocess's raw output (Windows only). By default no window opens — the mission runs hidden and `cressida watch` is the main way to see it live.
@@ -303,10 +305,12 @@ It shows the mission's current phase, a scrolling tail of recent events (includi
 
 - **Transient-failure retry** — task execution retries automatically (2 retries, exponential backoff) for the transient process-termination exit-code class seen under Windows job-object/console kills, instead of writing off the whole mission on an environmental blip.
 - **BOND gate hardening** — the approval gate always prefers BOND's structured JSON decision over free-text markdown when both exist (rather than racing on file-modification time), and logs a warning whenever it has to fall back to markdown parsing at all.
-- **Resume** — re-running `cressida run` with the same `--mission-id` rehydrates `execution_state.json`: tasks already COMPLETED are skipped, FAILED tasks are retried, and nothing already done gets re-run. A crashed or escalated mission doesn't mean starting over.
+- **Resume** — re-running `cressida run` with the same `--mission-id` rehydrates `execution_state.json`: tasks already COMPLETED are skipped, FAILED tasks are retried, and nothing already done gets re-run. A crashed or escalated mission doesn't mean starting over. The original brief is preserved across a resume, so re-run agents never end up working from a shorter "continue where you left off" string.
+- **One process per mission** — resuming a mission that is still actively running is refused rather than started alongside it. Two runs of one mission share a single `execution_state.json` and one set of output files, and nothing arbitrates between them; a terminal or stalled mission still resumes normally.
+- **Honest task state** — a mission records `IN_PROGRESS` and emits `task_started` the moment work begins, not at the first task boundary. On providers that only report tool activity once their CLI exits, this is the difference between "research is running" and a dashboard full of `PENDING` that looks identical to a dead process.
 
 ```bash
-cressida run brief.md --mission-id mission_20260810_1200   # resumes if that mission already has progress on disk
+cressida run brief.md --mission-id 20260810-url-shortener-01   # resumes if that mission already has progress on disk
 ```
 
 ---
@@ -394,7 +398,7 @@ Run against an existing repository instead of a fresh one with `--project-dir ~/
 
 ```
 missions/
-└── mission_2026_001/
+└── 20260810-url-shortener-01/
     ├── brief.md
     ├── intelligence/{research_report,PRD,Roadmap,methodology_brief}.md
     ├── ARCHITECTURE.md
@@ -405,6 +409,8 @@ missions/
     ├── execution_state.json
     └── live_events.jsonl        # live, append-only event log — see `cressida watch`
 ```
+
+Mission IDs are `YYYYMMDD-<slug>-NN`, where the slug comes from the brief and `NN` counts that day's missions — so a directory listing reads as a dated log of what was built rather than a wall of timestamps. Uniqueness comes from reserving the directory itself, so two missions launched in the same instant can never share one.
 
 Every engineering decision is reproducible from what's on disk.
 
@@ -581,7 +587,7 @@ Designed around least privilege: dynamic per-task tool exposure, human approval 
 ## Development
 
 ```bash
-git clone https://github.com/SlipStream90/Cressida
+git clone -b MI6 https://github.com/SlipStream90/Cressida
 python onboard.py
 pytest
 cressida dashboard   # or: cressida daemon

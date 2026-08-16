@@ -490,10 +490,42 @@ class Coordinator:
         if not pending:
             return
 
-        if len(pending) == 1:
-            await self._executor.execute_task(pending[0], state)
+        # A batch is a static, precomputed set — the schedule is built once, up
+        # front, from the dependency graph. Nothing re-checked whether a task's
+        # dependencies actually *succeeded* before running it, so a failed
+        # upstream task didn't stop anything: observed live, `architecture`
+        # completed on a mission whose `product_definition` had failed, i.e. Q
+        # designed a system against a PRD that was never written. Dependencies
+        # are verified here, at the one place every batch passes through.
+        runnable: list[Task] = []
+        for task in pending:
+            unmet = [
+                dep_id for dep_id in task.depends_on
+                if (dep := state.tasks.get(dep_id)) is not None
+                and dep.status != TaskStatus.COMPLETED
+            ]
+            if unmet:
+                task.status = TaskStatus.BLOCKED
+                task.error = f"Blocked by failed upstream task(s): {', '.join(unmet)}"
+                _logger.error("task %s blocked: %s", task.id, task.error)
+                await self._event_bus.publish(Event(
+                    type=EventType.TASK_BLOCKED,
+                    data={"task_id": task.id, "mission_id": state.mission_id, "error": task.error},
+                    source="coordinator",
+                ))
+            else:
+                runnable.append(task)
+
+        if not runnable:
+            self._persist_state(state)
+            return
+
+        if len(runnable) == 1:
+            await self._executor.execute_task(runnable[0], state)
         else:
-            await self._executor.execute_parallel(pending, state)
+            await self._executor.execute_parallel(runnable, state)
+
+        pending = runnable
 
         for task in pending:
             if task.status == TaskStatus.COMPLETED:
@@ -524,8 +556,11 @@ class Coordinator:
         all_completed = all(
             t.status == TaskStatus.COMPLETED for t in state.tasks.values()
         )
+        # BLOCKED counts as failure: it only happens when an upstream task
+        # failed, and a mission that skipped work is not a completed mission.
         any_failed = any(
-            t.status == TaskStatus.FAILED for t in state.tasks.values()
+            t.status in (TaskStatus.FAILED, TaskStatus.BLOCKED)
+            for t in state.tasks.values()
         )
 
         if any_failed:

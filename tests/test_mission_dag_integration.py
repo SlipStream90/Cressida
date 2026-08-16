@@ -150,3 +150,40 @@ async def test_every_task_announces_a_start_event(tmp_path, monkeypatch):
     assert set(started) == set(result.tasks), (
         f"tasks with no TASK_STARTED event: {set(result.tasks) - set(started)}"
     )
+
+
+@pytest.mark.asyncio
+async def test_failed_task_blocks_its_dependents(tmp_path, monkeypatch):
+    """A task whose dependency failed must not run.
+
+    The schedule is computed once, up front, from the dependency graph — so
+    nothing re-checked whether a batch's dependencies actually *succeeded*.
+    Observed live: `architecture` completed on a mission whose
+    `product_definition` had failed, i.e. Q designed against a PRD that was
+    never written."""
+    monkeypatch.setenv("CRESSIDA_MISSIONS_DIR", str(tmp_path / "missions"))
+    mission_id = "mission_dag_blocked_downstream_test"
+    project = tmp_path / "project"
+    project.mkdir()
+
+    class _FailingIntelligence(_MockAgent):
+        async def execute(self, state, task, event_bus=None):
+            if task.id == "product_definition":
+                raise RuntimeError("simulated provider failure")
+            return await super().execute(state, task, event_bus=event_bus)
+
+    registry = AgentRegistry()
+    for role in AgentRole:
+        registry.register(
+            _FailingIntelligence(role) if role == AgentRole.INTELLIGENCE else _MockAgent(role)
+        )
+
+    state = _build_mission_state(mission_id, "build a small utility", target_dir=str(project))
+    result = await Coordinator(registry, EventBus(), MemorySystem()).run_mission(state)
+
+    assert result.tasks["product_definition"].status == TaskStatus.FAILED
+    # architecture depends on product_definition — it must be blocked, not run.
+    arch = result.tasks["architecture"]
+    assert arch.status == TaskStatus.BLOCKED, arch.status
+    assert "product_definition" in (arch.error or "")
+    assert result.status != MissionStatus.COMPLETED

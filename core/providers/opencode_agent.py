@@ -41,7 +41,7 @@ from typing import Any
 from cressida.core import AgentRole, MissionState, Task
 from cressida.core.paths import project_dir
 from cressida.core.events import EventBus
-from cressida.core.providers.base import ProviderAgentBase
+from cressida.core.providers.base import ProviderAgentBase, cli_lock
 from cressida.core.providers.claude_cli_agent import _terminate_process_tree
 
 
@@ -172,9 +172,12 @@ class OpenCodeAgent(ProviderAgentBase):
     async def _invoke(self, prompt: str, target: Path | None = None) -> tuple[str, list[dict[str, Any]]]:
         import asyncio
 
-        return await asyncio.get_event_loop().run_in_executor(
-            None, self._invoke_blocking, prompt, target
-        )
+        # Serialized per CLI — see cli_lock() in providers/base.py for why
+        # two concurrent invocations of this CLI fail on its own SQLite store.
+        async with cli_lock("opencode"):
+            return await asyncio.get_event_loop().run_in_executor(
+                None, self._invoke_blocking, prompt, target
+            )
 
     def _invoke_blocking(self, prompt: str, target: Path | None = None) -> tuple[str, list[dict[str, Any]]]:
         work_dir = str((target or project_dir()).resolve())
