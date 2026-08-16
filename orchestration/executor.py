@@ -294,19 +294,53 @@ class TaskExecutor:
             encoding="utf-8",
         )
 
-    # Signatures of the transient "-1"/4294967295 (0xFFFFFFFF) exit code class
-    # (see core/providers/claude_cli_agent.py) — a Windows job-object/console
-    # kill or similar environmental termination, not a logic error in the
-    # prompt or task. Three consecutive missions were fully written off by
-    # this before a single retry existed on this code path (Coordinator's
-    # execute_task, as opposed to the separate execute_backlog path, which
-    # already retried) — see CRESSIDA_ROBUSTNESS_AND_RETRIEVAL_PLAN.md §3.3.
-    _TRANSIENT_EXIT_CODE_MARKERS = ("exited -1", "exited 4294967295")
+    # Signatures of environmental failures — the provider/transport died or
+    # gave up, rather than the prompt or task being wrong. Retrying these is
+    # free correctness; retrying a genuine logic error just burns tokens.
+    #
+    # Two families:
+    #
+    #   1. Process termination — the "-1"/4294967295 (0xFFFFFFFF) exit code
+    #      class (see core/providers/claude_cli_agent.py): a Windows
+    #      job-object/console kill or similar. Three consecutive missions were
+    #      fully written off by this before a single retry existed on this code
+    #      path (Coordinator's execute_task, as opposed to the separate
+    #      execute_backlog path, which already retried) — see
+    #      CRESSIDA_ROBUSTNESS_AND_RETRIEVAL_PLAN.md §3.3.
+    #
+    #   2. Upstream gateway timeouts — a routing gateway (OpenRouter et al.)
+    #      holds the connection between the CLI and the model and closes it
+    #      with 504 when no bytes arrive for ~120s. A large brief plus a model
+    #      that buffers its reasoning produces exactly that silence, so the
+    #      request dies while the model is working correctly. The provider
+    #      marks these `"isRetryable":true` in the response body and the CLI
+    #      exits *1*, which the exit-code family above does not match — so
+    #      every one of these failed a mission on the first attempt despite the
+    #      retry loop below being fully built. Observed killing INTELLIGENCE,
+    #      LEITER and TANNER on three separate QueueLLM frontend missions.
+    #
+    # Deliberately NOT matched: a bare "timeout". That would also swallow the
+    # legitimate `task_timeout_seconds` (cressida.yaml) expiry, which means the
+    # task really did run too long and should fail rather than be retried.
+    _TRANSIENT_FAILURE_MARKERS = (
+        # process termination
+        "exited -1",
+        "exited 4294967295",
+        # upstream gateway / transport
+        "upstream idle timeout",
+        '"isretryable":true',
+        "gateway timeout",
+        "socket hang up",
+        "econnreset",
+        "502 bad gateway",
+        "503 service unavailable",
+        "504",
+    )
 
     @classmethod
     def _is_transient_failure(cls, error: str) -> bool:
         lowered = error.lower()
-        return any(marker in lowered for marker in cls._TRANSIENT_EXIT_CODE_MARKERS)
+        return any(marker in lowered for marker in cls._TRANSIENT_FAILURE_MARKERS)
 
     async def execute_task(self, task: Task, state: MissionState) -> None:
         task.status = TaskStatus.IN_PROGRESS
