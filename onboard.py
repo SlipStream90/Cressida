@@ -6,7 +6,7 @@ CRESSIDA to use (ideally inside a virtual environment):
 
     python onboard.py                 # install + print MCP registration
     python onboard.py --provider anthropic   # also install a provider SDK
-    python onboard.py --register      # also register with Claude Code / opencode / Codex + install the skill
+    python onboard.py --register      # also register with Claude Code / opencode / Kilo Code / Codex + install the skill
 
 What it does:
   1. Verifies your Python is >= 3.11.
@@ -15,8 +15,9 @@ What it does:
      folder you cloned into.
   3. Prints (or registers) the exact MCP server config, pinned to *this*
      Python interpreter so the server always starts. With --register, wires
-     it into whichever of Claude Code (`claude` CLI) / opencode (`opencode`
-     CLI) / Codex (`codex` CLI) are found on PATH, and installs the
+     it into whichever of Claude Code (`claude` CLI) / OpenCode (`opencode`
+     CLI) / Kilo Code (`kilo` or `kilocode` CLI) / Codex (`codex` CLI) are
+     found on PATH, and installs the
      `cressida` skill (skills/cressida/SKILL.md) into Claude Code and Codex
      so missions get auto-invoked for project-sized requests without the
      user having to name CRESSIDA explicitly.
@@ -59,6 +60,82 @@ def _mcp_config() -> dict:
         "command": sys.executable.replace("\\", "/"),
         "args": ["-m", "cressida.mcp_server"],
     }
+
+
+def _read_jsonc(path: Path) -> dict:
+    """Read JSON or JSONC without requiring a third-party parser."""
+    source = path.read_text(encoding="utf-8")
+    cleaned: list[str] = []
+    in_string = False
+    escaped = False
+    in_line_comment = False
+    in_block_comment = False
+    i = 0
+    while i < len(source):
+        char = source[i]
+        next_char = source[i + 1] if i + 1 < len(source) else ""
+        if in_line_comment:
+            if char in "\r\n":
+                in_line_comment = False
+                cleaned.append(char)
+            i += 1
+            continue
+        if in_block_comment:
+            if char == "*" and next_char == "/":
+                in_block_comment = False
+                i += 2
+            else:
+                if char in "\r\n":
+                    cleaned.append(char)
+                i += 1
+            continue
+        if in_string:
+            cleaned.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            i += 1
+            continue
+        if char == '"':
+            in_string = True
+            cleaned.append(char)
+        elif char == "/" and next_char == "/":
+            in_line_comment = True
+            i += 2
+            continue
+        elif char == "/" and next_char == "*":
+            in_block_comment = True
+            i += 2
+            continue
+        else:
+            cleaned.append(char)
+        i += 1
+
+    source = "".join(cleaned)
+    cleaned = []
+    in_string = False
+    escaped = False
+    for i, char in enumerate(source):
+        if in_string:
+            cleaned.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+            cleaned.append(char)
+            continue
+        if char == "," and source[i + 1:].lstrip().startswith(("}", "]")):
+            continue
+        cleaned.append(char)
+    return json.loads("".join(cleaned))
 
 
 def _register_claude(cfg: dict) -> bool:
@@ -116,7 +193,7 @@ def _register_kilocode(cfg: dict) -> bool:
     data: dict = {}
     if path.exists():
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = _read_jsonc(path)
         except (json.JSONDecodeError, OSError) as exc:
             print(f"  (couldn't read {path}: {exc} — leaving Kilo config untouched)")
             return False
