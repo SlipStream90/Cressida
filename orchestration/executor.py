@@ -151,6 +151,7 @@ class TaskExecutor:
             brief=brief,
             reads=item.get("reads", []),
             task_description=item.get("description", ""),
+            writes=item.get("writes", []),
             objectives=objectives,
         )
 
@@ -270,7 +271,6 @@ class TaskExecutor:
                 # or BOND appear COMPLETED with zero-byte files.
                 if (
                     role != AgentRole.BRANCH
-                    and getattr(agent, "_PROVIDER_NAME", None)
                     and task.metadata.get("writes")
                     and not has_usable_output(
                         state, task, result

@@ -41,7 +41,7 @@ Translate architecture specifications into executable task graphs. Own dependenc
 - BOND approves the execution plan
 
 ## Communication Rules
-- Publish backlog.json to missions/<mission_id>/planning/
+- Publish `missions/<mission_id>/backlog.json`; include `reads`, `writes`, and `dependencies` for every task.
 - Flag discovered cycles immediately via event bus
 - Present task graph to BOND with parallel batches highlighted
 - Provide context dependencies to context_builder before execution

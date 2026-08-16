@@ -114,6 +114,23 @@ class Coordinator:
                         )
                         return state
 
+                failed = [t for t in batch_tasks if t.status == TaskStatus.FAILED]
+                if failed:
+                    # A precondition failure invalidates every downstream
+                    # handoff. Never let the precomputed schedule run agents
+                    # against missing or stale artifacts.
+                    state.status = MissionStatus.FAILED
+                    self._persist_state(state)
+                    await self._event_bus.publish(Event(
+                        type=EventType.MISSION_FAILED,
+                        data={
+                            "mission_id": state.mission_id,
+                            "error": "One or more tasks failed; downstream tasks were blocked",
+                        },
+                        source="coordinator",
+                    ))
+                    return state
+
             await self._finalize_mission(state)
 
         except CyclicDependencyError as e:
@@ -510,7 +527,39 @@ class Coordinator:
                 )
                 state.fail_task(task.id, task.error or "unknown error")
 
+        failed_ids = {task.id for task in pending if task.status == TaskStatus.FAILED}
+        if failed_ids:
+            blocked_ids = self._block_dependents(state, failed_ids)
+            for blocked_id in blocked_ids:
+                await self._event_bus.publish(Event(
+                    type=EventType.TASK_BLOCKED,
+                    data={
+                        "task_id": blocked_id,
+                        "mission_id": state.mission_id,
+                        "error": state.tasks[blocked_id].error,
+                    },
+                    source="coordinator",
+                ))
+
         self._persist_state(state)
+
+    def _block_dependents(self, state: MissionState, failed_ids: set[str]) -> list[str]:
+        """Mark every transitive downstream task blocked after a failed stage."""
+        blocked = set(failed_ids)
+        newly_blocked: list[str] = []
+        changed = True
+        while changed:
+            changed = False
+            for task in state.tasks.values():
+                if task.status != TaskStatus.PENDING:
+                    continue
+                if any(dep in blocked for dep in task.depends_on):
+                    reason = "Blocked by failed upstream task(s): " + ", ".join(sorted(set(task.depends_on) & blocked))
+                    state.block_task(task.id, reason)
+                    blocked.add(task.id)
+                    newly_blocked.append(task.id)
+                    changed = True
+        return newly_blocked
 
     async def _finalize_mission(self, state: MissionState) -> None:
         all_completed = all(
@@ -519,11 +568,17 @@ class Coordinator:
         any_failed = any(
             t.status == TaskStatus.FAILED for t in state.tasks.values()
         )
+        any_blocked = any(
+            t.status == TaskStatus.BLOCKED for t in state.tasks.values()
+        )
 
-        if any_failed:
+        if any_failed or any_blocked:
             state.status = MissionStatus.FAILED
             await self._event_bus.publish(
-                Event(type=EventType.MISSION_FAILED, data={"mission_id": state.mission_id, "error": "One or more tasks failed"}, source="coordinator")
+                Event(type=EventType.MISSION_FAILED, data={
+                    "mission_id": state.mission_id,
+                    "error": "One or more tasks failed or were blocked by an upstream failure",
+                }, source="coordinator")
             )
         else:
             # all_completed, or an empty/no-op DAG — both are a completed mission.

@@ -150,6 +150,7 @@ def _build_mission_state(
         },
     ))
     architecture_reads = [
+        f"missions/{mission_id}/intelligence/research_report.md",
         f"missions/{mission_id}/intelligence/PRD.md",
         f"missions/{mission_id}/intelligence/Roadmap.md",
     ]
@@ -189,7 +190,6 @@ def _build_mission_state(
             "trivial": trivial,
             "writes": [
                 f"missions/{mission_id}/ARCHITECTURE.md",
-                f"missions/{mission_id}/architecture/mcp_tool_requests.json",
             ],
         },
     ))
@@ -215,8 +215,11 @@ def _build_mission_state(
     bond_description = (
         "Review the research, PRD, and architecture artifacts."
         + bond_tool_instructions
-        + " Use approve_phase to approve the plan or reject_phase to block it. "
-        "Use escalate if confidence is below 0.7."
+        + " Write the authoritative decision to "
+        + f"missions/{mission_id}/bond_decisions/approve_plan.json as JSON with keys "
+        + '"decision" (APPROVED, REJECTED, or ESCALATED), "reason", and '
+        + '"approved_mcp_tools". If your provider exposes approve_phase, reject_phase, '
+        + "or escalate, you may also call it, but the JSON file is mandatory."
     )
     if not trivial:
         bond_reads.insert(1, f"missions/{mission_id}/intelligence/methodology_brief.md")
@@ -225,8 +228,11 @@ def _build_mission_state(
             "Check that the architecture actually follows the verified methodology and does not "
             "rely on approaches the brief flags as deprecated or unverified."
             + bond_tool_instructions
-            + " Use approve_phase to approve the plan or reject_phase to block it. "
-            "Use escalate if confidence is below 0.7."
+            + " Write the authoritative decision to "
+            + f"missions/{mission_id}/bond_decisions/approve_plan.json as JSON with keys "
+            + '"decision" (APPROVED, REJECTED, or ESCALATED), "reason", and '
+            + '"approved_mcp_tools". If your provider exposes approve_phase, reject_phase, '
+            + "or escalate, you may also call it, but the JSON file is mandatory."
         )
     state.add_task(Task(
         id="bond_approve_plan",
@@ -251,11 +257,16 @@ def _build_mission_state(
         metadata={
             "reads": [
                 f"missions/{mission_id}/intelligence/PRD.md",
+                f"missions/{mission_id}/intelligence/Roadmap.md",
                 f"missions/{mission_id}/ARCHITECTURE.md",
             ],
             "writes": [f"missions/{mission_id}/backlog.json"],
         },
     ))
+    if not trivial:
+        state.tasks["planning"].metadata["reads"].append(
+            f"missions/{mission_id}/intelligence/methodology_brief.md"
+        )
     implementation_reads = [
         f"missions/{mission_id}/intelligence/PRD.md",
         f"missions/{mission_id}/ARCHITECTURE.md",
@@ -304,11 +315,17 @@ def _build_mission_state(
             "reads": [
                 f"missions/{mission_id}/implementation/",
                 f"missions/{mission_id}/intelligence/PRD.md",
+                f"missions/{mission_id}/intelligence/Roadmap.md",
                 f"missions/{mission_id}/ARCHITECTURE.md",
+                f"missions/{mission_id}/backlog.json",
             ],
             "writes": [f"missions/{mission_id}/review_report.md"],
         },
     ))
+    if not trivial:
+        state.tasks["review"].metadata["reads"].insert(
+            1, f"missions/{mission_id}/intelligence/methodology_brief.md"
+        )
     return state
 
 

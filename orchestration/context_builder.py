@@ -40,6 +40,7 @@ class ContextBuilder:
         brief: str,
         reads: list[str],
         task_description: str,
+        writes: list[str] | None = None,
         objectives: list[str] | None = None,
         target_dir: str | Path | None = None,
         skills: list[str] | None = None,
@@ -104,7 +105,20 @@ class ContextBuilder:
             else:
                 sections.append(f"## Context: {path}\n*Not found*")
 
-        sections.append("## Output Requirements\nProduce the outputs specified in your agent spec. Write all artifacts to the mission directory.")
+        # Keep this section explicit and non-contradictory for every provider.
+        output_targets = writes or []
+        output_note = (
+            "\nDeclared artifact targets:\n" + "\n".join(f"- `{path}`" for path in output_targets)
+            if output_targets else ""
+        )
+        sections.append(
+            "## Output Requirements\n"
+            "Produce the outputs specified in your agent spec and task description. "
+            "Mission analysis artifacts belong under the mission directory; source "
+            "code belongs under the target project directory. Do not substitute a "
+            "closing summary for a required artifact."
+            + output_note
+        )
 
         return "\n\n---\n\n".join(sections)
 

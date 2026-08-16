@@ -191,6 +191,12 @@ def resolve_mission_path(path: str | Path, mission_id: str = "") -> Path:
     p = Path(path).expanduser()
     if p.is_absolute():
         return p
+    # Task metadata commonly stores canonical paths as
+    # `missions/<mission_id>/...`. Resolve that prefix through
+    # CRESSIDA_MISSIONS_DIR so relocated installations do not split artifacts.
+    if p.parts and p.parts[0].lower() == "missions":
+        return missions_root().joinpath(*p.parts[1:])
+
     direct = resolve_under_home(p)
     if direct.exists():
         return direct
@@ -199,3 +205,8 @@ def resolve_mission_path(path: str | Path, mission_id: str = "") -> Path:
         if candidate.exists():
             return candidate
     return direct
+
+
+def resolve_mission_artifact_path(path: str | Path, mission_id: str = "") -> Path:
+    """Resolve a declared task artifact, including canonical mission paths."""
+    return resolve_mission_path(path, mission_id)

@@ -15,7 +15,7 @@ Provide integrated quality assurance, security review, and test generation. Revi
 
 ## Inputs
 - Implementation code from BRANCH, ROOK, BOOTHROYD
-- Architecture specifications from Q
+- PRD, Roadmap, methodology brief, architecture, and backlog from upstream stages
 - Security requirements from mission dossier
 - Previous review findings from strategic memory
 - Test frameworks and tooling configurations
@@ -43,7 +43,7 @@ Provide integrated quality assurance, security review, and test generation. Revi
 - Review report produced for every implementation phase
 
 ## Communication Rules
-- Publish review findings to shared state as structured Markdown
+- Publish `missions/<mission_id>/review_report.md` as structured Markdown
 - Flag critical security findings immediately via event bus
 - Auto-generate test files alongside review report
 - Reference relevant security patterns from strategic memory

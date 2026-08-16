@@ -40,9 +40,10 @@ Own mission-level strategy, final approval authority, conflict resolution, and a
 - Mission completes within approved scope
 
 ## Communication Rules
-- Communicate exclusively through shared state and events
+- Communicate through mission artifacts and events. The authoritative gate result is
+  `missions/<mission_id>/bond_decisions/approve_plan.json`.
 - Never communicate implementation details — only strategy, approvals, and status
-- Use AGENT_MESSAGE_SENT events for coordination
+- Downstream planning starts only after that decision JSON contains `APPROVED`.
 
 ## Escalation Rules
 - Architecture violations → Block task, notify Q and REVIEW

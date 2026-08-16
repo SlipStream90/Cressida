@@ -7,7 +7,7 @@ from typing import Any
 from cressida.core import AgentRole, MissionState, Task
 from cressida.core.events import EventBus
 from cressida.core.interfaces import Agent
-from cressida.core.paths import resolve_under_home
+from cressida.core.paths import resolve_mission_artifact_path
 
 
 class ProviderExecutionError(RuntimeError):
@@ -76,7 +76,7 @@ def has_usable_output(state: MissionState, task: Task, result: Any) -> bool:
 
     for raw_path in writes:
         resolved = str(raw_path).replace("<mission_id>", state.mission_id)
-        path = resolve_under_home(resolved)
+        path = resolve_mission_artifact_path(resolved, state.mission_id)
         if path.suffix:
             if path.is_file() and path.stat().st_size > 0:
                 continue
@@ -93,7 +93,7 @@ def remove_empty_outputs(state: MissionState, task: Task) -> None:
     """Remove only zero-byte declared artifacts before the next provider."""
     for raw_path in task.metadata.get("writes") or []:
         resolved = str(raw_path).replace("<mission_id>", state.mission_id)
-        path = resolve_under_home(resolved)
+        path = resolve_mission_artifact_path(resolved, state.mission_id)
         candidates = [path] if path.suffix else list(path.rglob("*")) if path.is_dir() else []
         for candidate in candidates:
             try:

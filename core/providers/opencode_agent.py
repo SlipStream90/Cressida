@@ -183,6 +183,9 @@ class OpenCodeAgent(ProviderAgentBase):
             f"mission_id: `{state.mission_id}`\n{files}\n"
             "If those MCP tools are unavailable, do not probe the mission path; return "
             "the complete artifact contents in your final response so Cressida can persist them."
+            + (" For BOND, do not call approve_phase/reject_phase/escalate unless those "
+               "tools are visibly available; always write the required decision JSON."
+               if task.agent == AgentRole.BOND else "")
         )
 
     # ── CLI invocation ──────────────────────────────────────────────────────

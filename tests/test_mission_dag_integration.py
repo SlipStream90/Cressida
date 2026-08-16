@@ -52,6 +52,16 @@ class _MockAgent:
             target = project_dir(state)
             target.mkdir(parents=True, exist_ok=True)
             (target / "mock_output.txt").write_text("mock implementation output", encoding="utf-8")
+        if task.metadata.get("writes"):
+            from cressida.core.paths import resolve_mission_artifact_path
+            for raw_path in task.metadata["writes"]:
+                path = resolve_mission_artifact_path(
+                    raw_path.replace("<mission_id>", state.mission_id), state.mission_id
+                )
+                target = path if path.suffix else path / f"{task.id}.md"
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if not target.exists():
+                    target.write_text(f"mock artifact for {task.id}", encoding="utf-8")
         return f"mock output for {task.id}"
 
 
@@ -119,4 +129,32 @@ async def test_bond_rejection_escalates_and_blocks_downstream(tmp_path, monkeypa
     assert result.status == MissionStatus.ESCALATED
     assert result.tasks["planning"].status == TaskStatus.PENDING
     assert result.tasks["implementation"].status == TaskStatus.PENDING
+    assert not (project / "mock_output.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_upstream_failure_blocks_all_descendants(tmp_path, monkeypatch):
+    monkeypatch.setenv("CRESSIDA_MISSIONS_DIR", str(tmp_path / "missions"))
+    mission_id = "mission_dag_upstream_failure_test"
+    project = tmp_path / "project"
+    project.mkdir()
+
+    class _FailingResearch(_MockAgent):
+        async def execute(self, state, task, event_bus=None):
+            if task.id == "research":
+                raise RuntimeError("research provider unavailable")
+            return await super().execute(state, task, event_bus)
+
+    registry = AgentRegistry()
+    for role in AgentRole:
+        registry.register(_FailingResearch(role))
+
+    state = _build_mission_state(mission_id, "build a small utility", target_dir=str(project))
+    result = await Coordinator(registry, EventBus(), MemorySystem()).run_mission(state)
+
+    assert result.status == MissionStatus.FAILED
+    assert result.tasks["research"].status == TaskStatus.FAILED
+    assert result.tasks["product_definition"].status == TaskStatus.BLOCKED
+    assert result.tasks["architecture"].status == TaskStatus.BLOCKED
+    assert result.tasks["implementation"].status == TaskStatus.BLOCKED
     assert not (project / "mock_output.txt").exists()

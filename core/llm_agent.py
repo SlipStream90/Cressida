@@ -113,6 +113,7 @@ class LLMAgent(Agent):
             brief=state.brief,
             reads=task.metadata.get("reads", []),
             task_description=task.description,
+            writes=task.metadata.get("writes", []),
             objectives=state.objectives if state.objectives else None,
             target_dir=project_dir(state),
             skills=task.metadata.get("skills"),
