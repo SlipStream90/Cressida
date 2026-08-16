@@ -320,6 +320,7 @@ def _build_mission_state(
                 f"missions/{mission_id}/backlog.json",
             ],
             "writes": [f"missions/{mission_id}/review_report.md"],
+            "project_dir": str(target),
         },
     ))
     if not trivial:
@@ -632,7 +633,11 @@ async def _run_review_loop(
         verdict, outstanding = _parse_review_verdict(report_path)
 
         if verdict == "UNKNOWN":
-            print(f"[commands] review loop: no parseable verdict in {report_path}, stopping (not looping blind)")
+            current_state.status = MissionStatus.FAILED
+            current_state.metadata["review_loop_blocked"] = (
+                f"No parseable review verdict in {report_path}; mission cannot be approved."
+            )
+            print(f"[commands] review loop: no parseable verdict in {report_path}, blocking mission")
             return current_state
         if verdict == "APPROVED":
             if round_num:
@@ -640,14 +645,19 @@ async def _run_review_loop(
                 _record_review_loop_progress(root_mission_id, round=round_num, mission_id=current_mission_id, verdict="APPROVED", final=True)
             return current_state
         if not outstanding.strip():
-            print("[commands] review loop: NEEDS_FIXES but no parseable outstanding items, stopping (not looping blind)")
+            current_state.status = MissionStatus.FAILED
+            current_state.metadata["review_loop_blocked"] = (
+                "Review returned NEEDS_FIXES without parseable outstanding items."
+            )
+            print("[commands] review loop: NEEDS_FIXES without outstanding items, blocking mission")
             return current_state
         if round_num >= max_rounds:
+            current_state.status = MissionStatus.FAILED
             current_state.metadata["review_loop_exhausted"] = True
             current_state.metadata["review_loop_last_outstanding"] = outstanding
             print(
                 f"[commands] review loop hit its {max_rounds}-round cap for {root_mission_id} without "
-                "approval — leaving the mission COMPLETED; outstanding items are in "
+                "approval — blocking the mission; outstanding items are in "
                 "metadata['review_loop_last_outstanding'] and review_loop.json for a human to finish."
             )
             _record_review_loop_progress(
