@@ -60,6 +60,34 @@ def _wire_live_log(event_bus: EventBus) -> None:
         print(f"[commands] live log wiring skipped: {e}")
 
 
+# How BOND records its verdict.
+#
+# The old instruction was "use approve_phase / reject_phase / escalate" — but
+# under every CLI provider (claude_cli, opencode, codex, kilo) those are not
+# callable tools, so BOND improvised prose instead. Observed live: it approved
+# with 0.99 confidence, wrote a paragraph beginning "**BOND approval
+# complete.**", claimed to have written a JSON decision it never wrote, and the
+# gate — which fails closed, correctly — found no parseable verdict and blocked
+# a mission BOND had approved.
+#
+# So the file is now the instruction, and the tool is the fallback rather than
+# the other way round. _check_bond_gate prefers JSON over markdown outright, and
+# markdown-regex parsing exists only as a last resort.
+_BOND_DECISION_INSTRUCTIONS = (
+    " Record your verdict by WRITING THE FILE "
+    "missions/{mission_id}/bond_decisions/bond_approve_plan.json — do not rely on "
+    "approve_phase/reject_phase/escalate being callable, they are not available "
+    "under CLI-backed providers. The file must be exactly this JSON object: "
+    '{{"decision": "APPROVED" | "REJECTED" | "ESCALATED", "reason": "<one '
+    'paragraph>", "confidence": <0.0-1.0>, "approved_mcp_tools": [<exact tool '
+    'names you approve, empty list if none>]}}. '
+    "Use ESCALATED if your confidence is below 0.7. Nothing else you write is "
+    "read as your decision: the gate parses this file, and a mission with no "
+    "parseable verdict is blocked no matter what your summary says. Write the "
+    "file first, then summarize."
+)
+
+
 def _build_mission_state(
     mission_id: str,
     brief: str,
@@ -226,8 +254,7 @@ def _build_mission_state(
     bond_description = (
         "Review the research, PRD, and architecture artifacts."
         + bond_tool_instructions
-        + " Use approve_phase to approve the plan or reject_phase to block it. "
-        "Use escalate if confidence is below 0.7."
+        + _BOND_DECISION_INSTRUCTIONS.format(mission_id=mission_id)
     )
     if not trivial:
         bond_reads.insert(1, f"missions/{mission_id}/intelligence/methodology_brief.md")
@@ -236,8 +263,7 @@ def _build_mission_state(
             "Check that the architecture actually follows the verified methodology and does not "
             "rely on approaches the brief flags as deprecated or unverified."
             + bond_tool_instructions
-            + " Use approve_phase to approve the plan or reject_phase to block it. "
-            "Use escalate if confidence is below 0.7."
+            + _BOND_DECISION_INSTRUCTIONS.format(mission_id=mission_id)
         )
     state.add_task(Task(
         id="bond_approve_plan",
