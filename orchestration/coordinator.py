@@ -715,4 +715,10 @@ class Coordinator:
         # once the block is resolved.
         if "bond_gate_blocked" in state.metadata:
             payload["bond_gate_blocked"] = state.metadata["bond_gate_blocked"]
+        # Carry the pinned DAG-shape verdict through every write. Without this
+        # the first _persist_state after startup would drop the key that
+        # cli.commands._load_persisted_trivial reads, and a later resume would
+        # re-ask M and risk rebuilding a different-shaped DAG.
+        if "trivial" in state.metadata:
+            payload["trivial"] = bool(state.metadata["trivial"])
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")

@@ -129,6 +129,11 @@ def _build_mission_state(
     target = Path(target_dir).expanduser().resolve() if target_dir else project_dir()
     _check_project_dir_is_safe(target)
     state.metadata["project_dir"] = str(target)
+    # Recorded so it can be persisted and replayed verbatim on resume. This
+    # value decides the DAG *shape* (see `trivial` in the docstring above), and
+    # _rehydrate_from_execution_state's overlay is only sound while that shape
+    # is stable across runs — see _load_persisted_trivial.
+    state.metadata["trivial"] = trivial
     state.add_task(Task(
         id="research",
         name="Research phase",
@@ -428,12 +433,50 @@ def _persist_initial_state(state: MissionState) -> None:
         }
         for task_id, task in state.tasks.items()
     }
-    path.write_text(json.dumps({
+    payload: dict[str, Any] = {
         "mission_id": state.mission_id,
         "status": MissionStatus.PENDING.value,
         "tasks": tasks,
         "updated_at": datetime.now().isoformat(),
-    }, indent=2), encoding="utf-8")
+    }
+    # Pin the DAG-shape input so a resume rebuilds the identical DAG rather than
+    # re-asking M — see _load_persisted_trivial.
+    if "trivial" in state.metadata:
+        payload["trivial"] = bool(state.metadata["trivial"])
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _load_persisted_trivial(mission_id: str) -> bool | None:
+    """The `trivial` verdict recorded on this mission's first run, or None if
+    this is a genuinely fresh mission.
+
+    ``is_trivial_mission`` asks M (an LLM) and returns False on *any* failure —
+    no agent registered, timeout, unparseable reply. It was called on every run
+    including every resume, so a mission originally classified trivial=True
+    could come back False on resume simply because M timed out that time.
+
+    That silently changes the DAG shape: `trivial` decides whether
+    ``methodology_research`` exists at all, and re-derives what `architecture`
+    depends on. _rehydrate_from_execution_state's overlay is only sound while
+    the shape is stable for a given (mission_id, brief, trivial) triple — with
+    the verdict floating, a resume could rebuild a different DAG and apply the
+    saved statuses to it, which is exactly the corruption that function's
+    docstring warns about.
+
+    Pinning it on first run makes the third element of that triple durable, so
+    resume is deterministic. This matters more the more often missions resume
+    — an automatic resume path would re-roll the dice every time.
+    """
+    path = mission_dir(mission_id) / "execution_state.json"
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"[commands] could not read {path} for trivial verdict, will re-classify: {e}")
+        return None
+    value = payload.get("trivial")
+    return bool(value) if isinstance(value, bool) else None
 
 
 def _rehydrate_from_execution_state(state: MissionState, mission_id: str) -> bool:
@@ -770,8 +813,14 @@ async def run_mission(args: argparse.Namespace) -> int:
         timeout=getattr(args, "timeout", 0),
     )
 
-    from cressida.orchestration.commissioner import is_trivial_mission
-    trivial = await is_trivial_mission(mission_id, brief, registry)
+    # A resume must rebuild the *same* DAG it is about to overlay saved statuses
+    # onto, so replay the first run's verdict instead of re-asking M.
+    trivial = _load_persisted_trivial(mission_id)
+    if trivial is None:
+        from cressida.orchestration.commissioner import is_trivial_mission
+        trivial = await is_trivial_mission(mission_id, brief, registry)
+    else:
+        print(f"[commands] reusing recorded mission sizing for {mission_id}: trivial={trivial}")
 
     state = _build_mission_state(
         mission_id, brief, target_dir=getattr(args, "project_dir", None), trivial=trivial,
