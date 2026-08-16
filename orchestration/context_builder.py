@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from cressida.core.paths import cressida_home, mission_dir, project_dir
+from cressida.core.paths import cressida_home, mission_dir, project_dir, resolve_mission_path
 from cressida.core.types import AgentRole, AgentMessage
 
 
@@ -150,6 +150,7 @@ class ContextBuilder:
     def _resolve_read(self, read_path: str, mission_id: str) -> str | None:
         resolved = read_path.replace("<mission_id>", mission_id)
         candidates = [
+            resolve_mission_path(resolved, mission_id),
             self._root / resolved,
             self._root / "missions" / mission_id / resolved,
             self._root / "knowledge" / resolved,

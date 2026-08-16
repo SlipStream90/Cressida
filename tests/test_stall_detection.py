@@ -14,7 +14,7 @@ import json
 import os
 import time
 
-import mcp_server as srv
+from cressida import mcp_server as srv
 
 
 def test_mission_id_format_avoids_same_second_collisions():

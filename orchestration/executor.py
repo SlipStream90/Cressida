@@ -92,8 +92,11 @@ class TaskExecutor:
 
         while len(completed) < len(backlog):
             batch_num += 1
-            ready = [tid for tid in graph.get_ready_nodes(completed) if task_status.get(tid) != "in_progress"]
+            ready = [tid for tid in graph.get_ready_nodes(completed) if task_status.get(tid) == "pending"]
             if not ready:
+                for tid, status in task_status.items():
+                    if status == "pending":
+                        task_status[tid] = "blocked"
                 break
             for tid in ready:
                 task_status[tid] = "in_progress"
@@ -101,13 +104,41 @@ class TaskExecutor:
             tasks = [tasks_by_id[tid] for tid in ready]
             await self._execute_batch(tasks, mission_id, brief, objectives, task_status, completed)
 
+            # A failed task cannot satisfy its dependents. Mark the dependent
+            # chain explicitly so the backlog reaches a deterministic terminal
+            # state instead of waiting for a graph deadlock to imply it.
+            blocked = True
+            while blocked:
+                blocked = False
+                for tid, item in tasks_by_id.items():
+                    if task_status.get(tid) != "pending":
+                        continue
+                    dependencies = item.get("dependencies", [])
+                    failed_dependency = next(
+                        (dep for dep in dependencies if task_status.get(dep) in ("failed", "blocked")),
+                        None,
+                    )
+                    if failed_dependency is None:
+                        continue
+                    task_status[tid] = "blocked"
+                    blocked = True
+                    await self._event_bus.publish(Event(
+                        type=EventType.TASK_BLOCKED,
+                        data={
+                            "task_id": tid,
+                            "mission_id": mission_id,
+                            "error": f"Dependency {failed_dependency} failed or was blocked",
+                        },
+                        source="executor",
+                    ))
+
             self._persist_state(mission_id, task_status)
 
-        all_failed = all(v == "failed" for v in task_status.values())
-        if all_failed:
+        failed = any(v in ("failed", "blocked") for v in task_status.values())
+        if failed:
             await self._event_bus.publish(Event(
                 type=EventType.MISSION_FAILED,
-                data={"mission_id": mission_id, "error": "All tasks failed"},
+                data={"mission_id": mission_id, "error": "One or more backlog tasks failed or were blocked"},
                 source="executor",
             ))
 
@@ -153,6 +184,7 @@ class TaskExecutor:
             task_description=item.get("description", ""),
             writes=item.get("writes", []),
             objectives=objectives,
+            target_dir=item.get("project_dir") or None,
         )
 
         await self._event_bus.publish(Event(
@@ -166,14 +198,27 @@ class TaskExecutor:
             try:
                 agent = self._registry.get(agent_role)
                 if agent:
-                    fake_state = MissionState(mission_id=mission_id, brief=brief)
+                    fake_state = MissionState(
+                        mission_id=mission_id,
+                        brief=brief,
+                        metadata={"project_dir": item.get("project_dir", "")},
+                    )
                     fake_task = Task(
                         id=tid,
                         name=item.get("name", tid),
                         description=item.get("description", ""),
                         agent=agent_role,
+                        metadata={
+                            "reads": item.get("reads", []),
+                            "writes": item.get("writes", []),
+                            "toolset": item.get("toolset", []),
+                        },
                     )
-                    await agent.execute(fake_state, fake_task, event_bus=self._event_bus)
+                    result = await agent.execute(fake_state, fake_task, event_bus=self._event_bus)
+                    if fake_task.metadata.get("writes") and not has_usable_output(
+                        fake_state, fake_task, result
+                    ):
+                        raise RuntimeError(f"Task {tid} produced no usable declared outputs")
 
                 task_status[tid] = "completed"
                 completed.add(tid)
@@ -221,7 +266,11 @@ class TaskExecutor:
         path.write_text(
             json.dumps({
                 "mission_id": mission_id,
-                "status": "completed" if all(s == "completed" for s in task_status.values()) else "in_progress",
+                "status": (
+                    "failed" if any(s in ("failed", "blocked") for s in task_status.values())
+                    else "completed" if all(s == "completed" for s in task_status.values())
+                    else "in_progress"
+                ),
                 "tasks": tasks_data,
                 "updated_at": datetime.now().isoformat(),
             }, indent=2),

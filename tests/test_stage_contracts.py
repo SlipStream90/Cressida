@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from cressida.cli.commands import _build_mission_state
 from cressida.core.paths import resolve_mission_artifact_path
+from cressida.core import AgentRole
+from cressida.orchestration.context_builder import ContextBuilder
 
 
 def test_stage_handoffs_include_required_upstream_artifacts(tmp_path):
@@ -39,3 +41,25 @@ def test_mission_artifacts_follow_relocated_missions_root(tmp_path, monkeypatch)
         "mission_path_test",
     )
     assert resolved == missions / "mission_path_test" / "intelligence" / "research_report.md"
+
+
+def test_context_builder_reads_relocated_upstream_artifact(tmp_path, monkeypatch):
+    missions = tmp_path / "relocated-missions"
+    monkeypatch.setenv("CRESSIDA_MISSIONS_DIR", str(missions))
+    artifact = missions / "mission_context_test" / "intelligence" / "research_report.md"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("# upstream research", encoding="utf-8")
+
+    prompt = ContextBuilder().build_prompt(
+        task_id="product_definition",
+        agent_role=AgentRole.INTELLIGENCE,
+        mission_id="mission_context_test",
+        brief="build a thing",
+        reads=["missions/mission_context_test/intelligence/research_report.md"],
+        task_description="Define the product.",
+        writes=["missions/mission_context_test/intelligence/PRD.md"],
+        target_dir=tmp_path / "target-project",
+    )
+    assert "# upstream research" in prompt
+    assert "research_report.md" in prompt
+    assert "PRD.md" in prompt
