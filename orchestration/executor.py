@@ -257,6 +257,18 @@ class TaskExecutor:
             task.error = f"No agent registered for role: {role}"
             return
 
+        # Announce the start before the agent runs. Without this nothing is
+        # written between mission_started and the task's *completion*, and on
+        # a provider that reports tool calls only after its CLI exits
+        # (opencode/kilocode) a mission can go 10+ minutes emitting nothing —
+        # indistinguishable from a dead process in `cressida watch` and in the
+        # dashboard, which then shows every task as PENDING.
+        await self._event_bus.publish(Event(
+            type=EventType.TASK_STARTED,
+            data={"task_id": task.id, "mission_id": state.mission_id, "agent": role.value},
+            source="executor",
+        ))
+
         attempt = 0
         max_transient_retries = 2  # 3 total attempts, matching the plan's "2 attempts, exponential"
         while True:

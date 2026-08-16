@@ -277,6 +277,31 @@ async def run_mission(
     _ensure_monitor_started()
 
     resuming = bool(mission_id)
+    if resuming:
+        # Refuse to spawn a second process for a mission that is still going.
+        # Nothing downstream arbitrates between two runs of the same
+        # mission_id: they interleave writes into one execution_state.json,
+        # one live_events.jsonl and one set of output files. Observed live —
+        # two `cressida.cli run` processes on the same mission produced two
+        # mission_started events and ran research/methodology twice, each
+        # overwriting the other's artifacts.
+        # A crashed/failed/escalated mission is fine to resume (its status is
+        # terminal), and so is one whose process is gone (state has gone
+        # stale), so only an actively-progressing IN_PROGRESS run is blocked.
+        _state = _load_execution_state(mission_id)
+        _staleness = _mission_staleness_seconds(mission_id)
+        if (
+            str(_state.get("status", "")).upper() == "IN_PROGRESS"
+            and _staleness is not None
+            and _staleness < _STALL_SECONDS
+        ):
+            return (
+                f"Mission {mission_id} is already running (last activity "
+                f"{int(_staleness)}s ago). Not starting a second process — two runs of "
+                f"one mission overwrite each other's state and artifacts.\n"
+                f"Watch it with `cressida watch {mission_id}`, or wait for it to "
+                f"finish/stall before resuming."
+            )
     if not mission_id:
         # Microsecond suffix avoids collisions between missions started in
         # the same wall-clock second (second-resolution timestamps alone
@@ -311,7 +336,13 @@ async def run_mission(
     out_dir = _mission_path(mission_id)
     out_dir.mkdir(parents=True, exist_ok=True)
     brief_path = out_dir / "brief.md"
-    brief_path.write_text(resolved_brief, encoding="utf-8")
+    # A resume must not overwrite the brief the mission was started with. The
+    # resume call usually carries a short "continue where you left off" string
+    # (or a bare mission_id), and writing that over the original left every
+    # re-run agent working from a one-line brief while the real requirements —
+    # endpoints, schema, constraints — were gone from disk.
+    if not (resuming and brief_path.exists()):
+        brief_path.write_text(resolved_brief, encoding="utf-8")
 
     # Spawn the mission as its own process — hidden by default (`cressida
     # watch` is the main way to see it live), or with a visible console

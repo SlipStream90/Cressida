@@ -19,7 +19,7 @@ import pytest
 
 from cressida.cli.commands import _build_mission_state
 from cressida.core import AgentRole, MissionState, MissionStatus, Task, TaskStatus
-from cressida.core.events import EventBus
+from cressida.core.events import EventBus, EventType
 from cressida.core.paths import mission_dir
 from cressida.core.registry import AgentRegistry
 from cressida.memory.system import MemorySystem
@@ -120,3 +120,33 @@ async def test_bond_rejection_escalates_and_blocks_downstream(tmp_path, monkeypa
     assert result.tasks["planning"].status == TaskStatus.PENDING
     assert result.tasks["implementation"].status == TaskStatus.PENDING
     assert not (project / "mock_output.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_every_task_announces_a_start_event(tmp_path, monkeypatch):
+    """Each task must publish TASK_STARTED before its agent runs.
+
+    Without it the only task-level events on the bus are completions, so a
+    mission running a slow agent looks identical to a dead one — every task
+    reads PENDING in the dashboard and `cressida watch` reports "idle /
+    between tasks" while an agent is actively working."""
+    monkeypatch.setenv("CRESSIDA_MISSIONS_DIR", str(tmp_path / "missions"))
+    mission_id = "mission_dag_task_started_test"
+    project = tmp_path / "project"
+    project.mkdir()
+
+    started: list[str] = []
+    bus = EventBus()
+
+    async def _record(event):
+        started.append(event.data.get("task_id"))
+
+    bus.subscribe(EventType.TASK_STARTED, _record)
+
+    state = _build_mission_state(mission_id, "build a small utility", target_dir=str(project))
+    result = await Coordinator(_mock_registry(), bus, MemorySystem()).run_mission(state)
+
+    assert result.status == MissionStatus.COMPLETED
+    assert set(started) == set(result.tasks), (
+        f"tasks with no TASK_STARTED event: {set(result.tasks) - set(started)}"
+    )

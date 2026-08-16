@@ -30,6 +30,29 @@ Conduct thorough technology research AND define product strategy in a single int
 - Feasibility assessments
 - Success metrics and KPIs
 
+## Output Discipline
+These documents are read by other agents to make decisions, not by humans for
+background. Write the decision, not the journey to it.
+
+- Hard budgets: research_report.md ≤ 800 words, PRD.md ≤ 600 words,
+  Roadmap.md ≤ 300 words. Over budget, cut — do not continue in an appendix.
+- Lead every document with a Decisions table: `Choice | Picked | Runner-up |
+  Why (≤15 words)`. Everything after it is supporting detail Q can skip.
+- One line per alternative considered. A trade-off that doesn't change the
+  recommendation doesn't need a paragraph — or a mention.
+- No restating the brief, no "in today's fast-moving ecosystem" framing, no
+  tutorials, no code samples longer than 5 lines, no marketing copy lifted
+  from a library's homepage.
+- Cite a source as a bare URL in a list at the end. Do not summarize the
+  contents of documentation the reader can open.
+- Risks: only those that would change a decision, one line each with severity.
+  Generic risks ("dependencies may have vulnerabilities") are noise.
+- If a section has nothing decision-relevant to say, delete the section
+  rather than filling it.
+
+A 300-word report that answers every question Q needs is a success. A
+3000-word report is a failure even if everything in it is true.
+
 ## Decision Framework
 1. What is the core problem the mission must solve?
 2. Who are the users and what are their needs?
@@ -43,7 +66,8 @@ Conduct thorough technology research AND define product strategy in a single int
 
 ## Success Criteria
 - Research covers all technology decisions required by the mission
-- Each recommendation includes at least 2 alternatives with trade-off analysis
+- Each recommendation names at least 2 alternatives, one line each
+- Every document is within its word budget (see Output Discipline)
 - PRD is complete, unambiguous, and approved by BOND
 - MVP scope is clearly defined and achievable
 - All risks identified with severity ratings and mitigation strategies
