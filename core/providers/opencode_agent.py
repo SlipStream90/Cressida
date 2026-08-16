@@ -142,7 +142,7 @@ class OpenCodeAgent(ProviderAgentBase):
         # Combine system prompt and user prompt for opencode
         # OpenCode doesn't have a separate system prompt flag like claude CLI,
         # so we prepend the agent spec to the user prompt.
-        full_prompt = f"[Agent Spec: {self.role.value}]\n\n{system_prompt}\n\n---\n\n[Task]\n\n{user_prompt}"
+        full_prompt = f"[Agent Spec: {self.role.value}]\n\n{system_prompt}\n\n---\n\n[Task]\n\n{user_prompt}\n\n{self._artifact_boundary_prompt(state, task)}"
 
         # Run against the mission's target project, not the Cressida install.
         text, tool_events = await self._invoke(full_prompt, project_dir(state))
@@ -166,6 +166,27 @@ class OpenCodeAgent(ProviderAgentBase):
 
         self._write_output(state.mission_id, task, text)
         return text
+
+    @staticmethod
+    def _artifact_boundary_prompt(state: MissionState, task: Task) -> str:
+        writes = task.metadata.get("writes") or []
+        if not writes:
+            return ""
+        files = "\n".join(f"- {path}" for path in writes)
+        return (
+            "## Cressida Artifact Boundary — mandatory\n"
+            "Your native OpenCode filesystem tools are sandboxed to the target project. "
+            "Do not use native read/glob/write tools on the Cressida mission directory. "
+            "Use the connected Cressida MCP tools `read_mission_file` and "
+            "`write_mission_file` for mission artifacts, with this mission_id and a "
+            "mission-relative filename. Publish every declared artifact before ending:\n"
+            f"mission_id: `{state.mission_id}`\n{files}\n"
+            "If those MCP tools are unavailable, do not probe the mission path; return "
+            "the complete artifact contents in your final response so Cressida can persist them."
+            + (" For BOND, do not call approve_phase/reject_phase/escalate unless those "
+               "tools are visibly available; always write the required decision JSON."
+               if task.agent == AgentRole.BOND else "")
+        )
 
     # ── CLI invocation ──────────────────────────────────────────────────────
 
@@ -284,6 +305,7 @@ def parse_jsonl_stream(stdout: str, cli_name: str) -> tuple[str, list[dict[str, 
 
     last_text = ""
     tool_events: list[dict[str, Any]] = []
+    pending_tool_calls: dict[str, dict[str, Any]] = {}
     error_message: str | None = None
     saw_any_json = False
 
@@ -301,19 +323,63 @@ def parse_jsonl_stream(stdout: str, cli_name: str) -> tuple[str, list[dict[str, 
 
         evt_type = data.get("type")
         part = data.get("part") or {}
+        # `part` is where the live CLIs put everything, but the top-level and
+        # `tool_result` shapes below are kept as fallbacks: both CLIs have
+        # shipped them across versions, and tolerating an extra key costs
+        # nothing next to silently losing a tool event.
+        state = part.get("state") or data.get("state") or {}
+        call_id = (
+            data.get("id") or data.get("tool_use_id")
+            or part.get("id") or part.get("tool_use_id")
+        )
+
+        def _tool_name() -> str:
+            return (
+                part.get("tool") or part.get("name")
+                or data.get("tool") or data.get("name") or "unknown"
+            )
 
         if evt_type == "text":
-            text = part.get("text")
+            text = part.get("text") or data.get("text")
             if isinstance(text, str) and text:
                 last_text = text
         elif evt_type == "tool_use":
-            state = part.get("state") or {}
-            tool_events.append({
-                "tool": part.get("tool") or "unknown",
-                "input": state.get("input"),
-                "output": state.get("output"),
-                "is_error": state.get("status") == "error",
-            })
+            entry = {
+                "tool": _tool_name(),
+                "input": state.get("input", data.get("input")),
+                "output": state.get("output", data.get("output")),
+                "is_error": bool(data.get("is_error")) or state.get("status") == "error",
+            }
+            tool_events.append(entry)
+            if call_id:
+                pending_tool_calls[call_id] = entry
+        elif evt_type == "tool_result":
+            # Older/alternate shape: the result arrives as its own event and
+            # is paired back to its call by id.
+            output = (
+                state.get("output") if "output" in state
+                else data.get("output") if "output" in data
+                else data.get("content")
+            )
+            is_error = bool(data.get("is_error")) or state.get("status") == "error"
+            entry = pending_tool_calls.get(call_id) if call_id else None
+            if entry is not None:
+                entry["output"] = output
+                entry["is_error"] = is_error
+            else:
+                tool_events.append({
+                    "tool": _tool_name(), "input": None,
+                    "output": output, "is_error": is_error,
+                })
+        elif evt_type == "message" and data.get("content"):
+            content = data["content"]
+            if isinstance(content, list):
+                content = "\n".join(
+                    blk.get("text", "") for blk in content
+                    if isinstance(blk, dict) and blk.get("type") == "text"
+                )
+            if content:
+                last_text = content
         elif evt_type == "error":
             err = data.get("error") or {}
             msg = (err.get("data") or {}).get("message") or err.get("message")

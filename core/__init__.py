@@ -179,3 +179,10 @@ class MissionState:
             task.status = TaskStatus.FAILED
             task.error = error
             self.updated_at = datetime.now()
+
+    def block_task(self, task_id: str, reason: str) -> None:
+        task = self.tasks.get(task_id)
+        if task and task.status == TaskStatus.PENDING:
+            task.status = TaskStatus.BLOCKED
+            task.error = reason
+            self.updated_at = datetime.now()

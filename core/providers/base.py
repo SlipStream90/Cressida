@@ -22,7 +22,7 @@ from typing import Any
 from cressida.core.events import EventBus, EventType, publish_safe
 from cressida.core.interfaces import Agent
 from cressida.core import AgentRole, MissionState, Task
-from cressida.core.paths import mission_dir, project_dir, resolve_under_home
+from cressida.core.paths import mission_dir, project_dir, resolve_mission_artifact_path, resolve_under_home
 from cressida.orchestration.context_builder import ContextBuilder
 
 
@@ -97,6 +97,7 @@ class ProviderAgentBase(Agent):
             brief=state.brief,
             reads=task.metadata.get("reads", []),
             task_description=task.description,
+            writes=task.metadata.get("writes", []),
             objectives=state.objectives if state.objectives else None,
             target_dir=project_dir(state),
             skills=task.metadata.get("skills"),
@@ -132,7 +133,7 @@ class ProviderAgentBase(Agent):
             # artifacts into a second mission tree that no downstream `reads`
             # could find. Absolute paths still pass through, which is how a
             # mission writes into an external target project.
-            p = resolve_under_home(resolved)
+            p = resolve_mission_artifact_path(resolved, mission_id)
             target = p if p.suffix else (p / f"{task.id}.md")
             self._reconcile_file_write(mission_id, target, content, cutoff)
 

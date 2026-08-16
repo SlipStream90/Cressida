@@ -6,7 +6,7 @@ CRESSIDA to use (ideally inside a virtual environment):
 
     python onboard.py                 # install + print MCP registration
     python onboard.py --provider anthropic   # also install a provider SDK
-    python onboard.py --register      # also register with Claude Code / opencode / Codex + install the skill
+    python onboard.py --register      # also register with Claude Code / opencode / Kilo Code / Codex + install the skill
 
 What it does:
   1. Verifies your Python is >= 3.11.
@@ -15,8 +15,9 @@ What it does:
      folder you cloned into.
   3. Prints (or registers) the exact MCP server config, pinned to *this*
      Python interpreter so the server always starts. With --register, wires
-     it into whichever of Claude Code (`claude` CLI) / opencode (`opencode`
-     CLI) / Codex (`codex` CLI) are found on PATH, and installs the
+     it into whichever of Claude Code (`claude` CLI) / OpenCode (`opencode`
+     CLI) / Kilo Code (`kilo` or `kilocode` CLI) / Codex (`codex` CLI) are
+     found on PATH, and installs the
      `cressida` skill (skills/cressida/SKILL.md) into Claude Code and Codex
      so missions get auto-invoked for project-sized requests without the
      user having to name CRESSIDA explicitly.
@@ -61,6 +62,82 @@ def _mcp_config() -> dict:
     }
 
 
+def _read_jsonc(path: Path) -> dict:
+    """Read JSON or JSONC without requiring a third-party parser."""
+    source = path.read_text(encoding="utf-8")
+    cleaned: list[str] = []
+    in_string = False
+    escaped = False
+    in_line_comment = False
+    in_block_comment = False
+    i = 0
+    while i < len(source):
+        char = source[i]
+        next_char = source[i + 1] if i + 1 < len(source) else ""
+        if in_line_comment:
+            if char in "\r\n":
+                in_line_comment = False
+                cleaned.append(char)
+            i += 1
+            continue
+        if in_block_comment:
+            if char == "*" and next_char == "/":
+                in_block_comment = False
+                i += 2
+            else:
+                if char in "\r\n":
+                    cleaned.append(char)
+                i += 1
+            continue
+        if in_string:
+            cleaned.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            i += 1
+            continue
+        if char == '"':
+            in_string = True
+            cleaned.append(char)
+        elif char == "/" and next_char == "/":
+            in_line_comment = True
+            i += 2
+            continue
+        elif char == "/" and next_char == "*":
+            in_block_comment = True
+            i += 2
+            continue
+        else:
+            cleaned.append(char)
+        i += 1
+
+    source = "".join(cleaned)
+    cleaned = []
+    in_string = False
+    escaped = False
+    for i, char in enumerate(source):
+        if in_string:
+            cleaned.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+            cleaned.append(char)
+            continue
+        if char == "," and source[i + 1:].lstrip().startswith(("}", "]")):
+            continue
+        cleaned.append(char)
+    return json.loads("".join(cleaned))
+
+
 def _register_claude(cfg: dict) -> bool:
     """Best-effort: register with Claude Code via the `claude` CLI if present."""
     from shutil import which
@@ -96,10 +173,39 @@ def _register_opencode(cfg: dict) -> bool:
     data.setdefault("mcp", {})["cressida"] = {
         "type": "local",
         "command": [cfg["command"], *cfg["args"]],
+        "environment": {"CRESSIDA_INVOKER": "opencode"},
         "enabled": True,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2) + "\n")
+    print(f"  Wrote MCP config to {path}")
+    return True
+
+
+def _register_kilocode(cfg: dict) -> bool:
+    """Wire the MCP server into Kilo's global JSONC config."""
+    from shutil import which
+
+    if which("kilo") is None and which("kilocode") is None:
+        return False
+
+    path = Path.home() / ".config" / "kilo" / "kilo.jsonc"
+    data: dict = {}
+    if path.exists():
+        try:
+            data = _read_jsonc(path)
+        except (json.JSONDecodeError, OSError) as exc:
+            print(f"  (couldn't read {path}: {exc} — leaving Kilo config untouched)")
+            return False
+
+    data.setdefault("mcp", {})["cressida"] = {
+        "type": "local",
+        "command": [cfg["command"], *cfg["args"]],
+        "environment": {"CRESSIDA_INVOKER": "kilocode"},
+        "enabled": True,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     print(f"  Wrote MCP config to {path}")
     return True
 
@@ -141,8 +247,8 @@ def _register_codex(cfg: dict) -> bool:
 
 def _install_skills() -> list[str]:
     """Copy the bundled Cressida skill (auto-invoke trigger) to every
-    skill-aware client found on this machine (Claude Code, Codex). opencode
-    has no skill mechanism -- it gets a nudge in its AGENTS.md instead (see
+    skill-aware client found on this machine (Claude Code, Codex). OpenCode
+    and Kilo Code get a nudge in their AGENTS.md files instead (see
     the one-time onboarding note in docs/, not automated here since AGENTS.md
     is user-owned free text, not a directory CRESSIDA can safely overwrite).
     """
@@ -158,6 +264,37 @@ def _install_skills() -> list[str]:
         dest_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy(src, dest_dir / "SKILL.md")
         installed.append(client)
+
+    # OpenCode has no skill directory, so put the equivalent provider-aware
+    # instruction in its global AGENTS.md. Preserve existing user content and
+    # replace only the Cressida block on repeated onboarding runs.
+    for client, agents_path, identity in (
+        ("opencode", Path.home() / ".config" / "opencode" / "AGENTS.md", "opencode"),
+        ("kilocode", Path.home() / ".config" / "kilo" / "AGENTS.md", "kilocode"),
+    ):
+        agents_file = agents_path
+        if not agents_file.parent.exists():
+            continue
+        marker = "## Cressida"
+        end_marker = "<!-- END CRESSIDA -->"
+        block = (
+            "## Cressida\n\n"
+            f"For project-sized builds, call the `cressida` MCP server. Because "
+            f"this is {client}, call `run_mission` with `invoker=\"{identity}\"` "
+            "and `provider=\"auto\"` unless the user explicitly requests a "
+            "different provider. Pass the target `project_dir` explicitly.\n\n"
+            f"{end_marker}\n"
+        )
+        try:
+            existing = agents_file.read_text(encoding="utf-8") if agents_file.exists() else ""
+            if marker in existing:
+                prefix = existing[:existing.index(marker)].rstrip()
+                suffix = existing[existing.find(end_marker) + len(end_marker):].lstrip() if end_marker in existing else ""
+                existing = prefix + ("\n\n" + suffix if suffix else "\n\n")
+            agents_file.write_text(existing + block, encoding="utf-8")
+            installed.append(client)
+        except OSError as exc:
+            print(f"  (couldn't update {agents_file}: {exc})")
     return installed
 
 
@@ -177,6 +314,7 @@ def main() -> int:
     cfg = _mcp_config()
     claude_registered = args.register and _register_claude(cfg)
     opencode_registered = args.register and _register_opencode(cfg)
+    kilocode_registered = args.register and _register_kilocode(cfg)
     codex_registered = args.register and _register_codex(cfg)
     skills_installed = args.register and _install_skills()
 
@@ -198,6 +336,13 @@ def main() -> int:
         print("opencode CLI not found on PATH — skipped opencode registration.")
 
     print()
+    if kilocode_registered:
+        print("MCP server 'cressida' registered with Kilo Code (~/.config/kilo/kilo.jsonc).")
+        print("Restart Kilo Code to pick it up.")
+    elif args.register:
+        print("Kilo Code CLI not found on PATH — skipped Kilo Code registration.")
+
+    print()
     if codex_registered:
         print("MCP server 'cressida' registered with Codex (~/.codex/config.toml).")
         print("Restart Codex to pick it up.")
@@ -207,10 +352,10 @@ def main() -> int:
     print()
     if skills_installed:
         print(f"Cressida skill installed for auto-invocation: {', '.join(skills_installed)}.")
-        print("(opencode has no skill mechanism — see AGENTS.md for its equivalent nudge.)")
+        print("(OpenCode/Kilo Code have no skill mechanism — see AGENTS.md for the equivalent nudge.)")
     print("=" * 68)
 
-    print("\nNo API key required if you already have the Claude Code or opencode")
+    print("\nNo API key required if you already have Claude Code, opencode, or Kilo Code")
     print("CLI installed & logged in — CRESSIDA runs missions through it. Otherwise")
     print("set a provider key, e.g.  export ANTHROPIC_API_KEY=sk-...  (or use Ollama).")
     print("Then in Claude Code:  run_mission(brief=\"Build a todo REST API\")")

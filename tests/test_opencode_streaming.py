@@ -63,6 +63,21 @@ def test_tool_only_run_returns_empty_text_not_the_raw_stream():
         '{"type":"step_start","part":{"id":"p1"}}\n'
         '{"type":"tool_use","part":{"tool":"read","state":{"status":"completed"}}}'
     )
+def test_parse_output_accepts_kilo_nested_tool_shape():
+    lines = [
+        '{"type":"tool_use","part":{"type":"tool","tool":"bash",'
+        '"state":{"status":"completed","input":{"cmd":"pwd"},"output":"C:\\\\repo"}}}',
+        '{"type":"text","part":{"type":"text","text":"finished"}}',
+    ]
+    text, events = OpenCodeAgent._parse_output("\n".join(lines))
+    assert text == "finished"
+    assert events[0]["tool"] == "bash"
+    assert events[0]["input"] == {"cmd": "pwd"}
+    assert events[0]["output"] == "C:\\repo"
+
+
+def test_parse_output_handles_tool_result_without_matching_call():
+    stdout = '{"type":"tool_result","id":"unknown","output":"orphaned"}'
     text, events = OpenCodeAgent._parse_output(stdout)
     assert text == ""
     assert len(events) == 1

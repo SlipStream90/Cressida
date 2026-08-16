@@ -28,6 +28,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
@@ -57,6 +58,7 @@ mcp = FastMCP(
         "Use run_mission to start a new project from a plain-English brief. "
         "Use mission_status to check progress. "
         "Use read_mission_file to inspect outputs. "
+        "Use write_mission_file to create or update artifacts for the active mission. "
         "Use resolve_escalation when BOND requests a human decision."
         " When starting a mission, pass the calling CLI identity as invoker "
         "(claude_cli, opencode, kilocode, or codex) so the mission runs on the "
@@ -64,6 +66,16 @@ mcp = FastMCP(
         "is unknown."
     ),
 )
+
+
+
+def _coerce_brief_text(brief: Any) -> str:
+    """Normalize MCP attachment, bytes, path, and inline brief inputs."""
+    if hasattr(brief, "read") and callable(brief.read):
+        brief = brief.read()
+    if isinstance(brief, bytes):
+        return brief.decode("utf-8", errors="replace")
+    return str(brief or "")
 
 # ── Status monitoring (starts once on first use) ─────────────────────────────
 _monitor_started = False
@@ -136,6 +148,7 @@ def _mission_file(mission_id: str, filename: str) -> Path:
             f"Refusing to read outside mission {mission_id}: {filename!r}"
         )
     return target
+
 
 
 def _load_execution_state(mission_id: str) -> dict:
@@ -257,7 +270,7 @@ def _spawn_mission_background(
 
 @mcp.tool()
 async def run_mission(
-    brief: str,
+    brief: Any,
     provider: str = "auto",
     invoker: str = "",
     ollama_model: str = "llama3.2",
@@ -284,7 +297,8 @@ async def run_mission(
     Args:
         brief:        What you want built. Can be a plain-English description
                       or a path to a markdown file containing a PRD.
-        provider:     auto | opencode | claude_cli | codex | anthropic | openai | gemini | groq | ollama | kilocode | gateway
+        provider:     auto | opencode | claude_cli | codex | anthropic | openai | gemini | groq | ollama | kilocode | gateway.
+                      `auto` keeps a provider fallback chain; an explicit value pins the mission.
         invoker:      Which CLI is calling this tool — claude_cli, opencode,
                       kilocode, or codex. With provider="auto" the mission runs
                       on that CLI, so a mission started from Claude Code drives
@@ -362,6 +376,7 @@ async def run_mission(
     # "desktop", never "frontend" or "dashboard". Skill selection isn't the
     # only downstream reader of state.brief, so this is fixed at the source,
     # not patched in the one place it happened to be noticed.
+    brief = _coerce_brief_text(brief)
     resolved_brief = brief
     try:
         candidate = Path(brief.strip())
@@ -422,6 +437,7 @@ async def run_mission(
     return (
         window_note +
         f"Mission started: {mission_id}\n"
+        f"Provider: {provider}\n"
         f"Output: {out_dir}\n\n"
         f"The mission is running in the background. "
         f"Call mission_status(mission_id=\"{mission_id}\") to check progress, or run "
@@ -660,7 +676,10 @@ def read_mission_file(mission_id: str, filename: str) -> str:
     Returns:
         File contents as text.
     """
-    target = _mission_file(mission_id, filename)
+    try:
+        target = _mission_file(mission_id, filename)
+    except ValueError as exc:
+        return f"Invalid mission filename: {exc}"
     if not target.exists():
         # List what's actually there to help the caller
         mpath = _mission_path(mission_id)
@@ -669,6 +688,30 @@ def read_mission_file(mission_id: str, filename: str) -> str:
         files = [str(f.relative_to(mpath)) for f in mpath.rglob("*") if f.is_file()]
         return f"File {filename!r} not found in mission {mission_id}.\n\nAvailable files:\n" + "\n".join(sorted(files))
     return target.read_text(encoding="utf-8", errors="replace")
+
+
+@mcp.tool()
+def write_mission_file(mission_id: str, filename: str, content: str) -> str:
+    """Write an artifact inside the active mission directory.
+
+    CLI providers run with the target project as their native-tool sandbox,
+    while mission artifacts live elsewhere. This tool gives OpenCode and Kilo
+    a provider-neutral way to publish research, PRDs, architecture, and review
+    files without attempting to escape their project root with native tools.
+    """
+    mission = _mission_path(mission_id)
+    if not mission.exists():
+        return f"Mission {mission_id!r} not found."
+    try:
+        target = _mission_file(mission_id, filename)
+    except ValueError as exc:
+        return f"Invalid mission filename: {exc}"
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    except OSError as exc:
+        return f"ERROR writing {target}: {exc}"
+    return f"Written {len(content)} chars to {target}"
 
 
 @mcp.tool()

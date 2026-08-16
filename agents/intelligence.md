@@ -12,9 +12,9 @@ Conduct thorough technology research AND define product strategy in a single int
 - Create user personas and user stories
 - Define MVP scope and feature prioritization
 - Establish success metrics and KPIs
-- Create release roadmaps
+- Create release roadmaps when assigned the product_definition stage
 - Assess feasibility and competitive landscape
-- Produce research_report.md + PRD.md + Roadmap.md in one pass
+- Produce research_report.md during the research stage; the separate product_definition task owns PRD.md and Roadmap.md
 
 ## Inputs
 - Mission brief from CRESSIDA COMMAND
@@ -75,7 +75,7 @@ A 300-word report that answers every question Q needs is a success. A
 
 ## Communication Rules
 - Output all findings as structured Markdown
-- Publish research_report.md + PRD.md + Roadmap.md to shared state before Q begins architecture
+- Research publishes research_report.md; product_definition publishes PRD.md and Roadmap.md. All three are read from the mission directory before Q begins architecture.
 - Flag critical risks immediately via event bus
 - Flag scope changes immediately via event bus
 

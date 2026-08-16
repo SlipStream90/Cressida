@@ -40,6 +40,7 @@ class ContextBuilder(ABC):
         brief: str,
         reads: list[str],
         task_description: str,
+        writes: list[str] | None = None,
         objectives: list[str] | None = None,
     ) -> str:
         ...

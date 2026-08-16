@@ -14,7 +14,7 @@ from cressida.core.events import EventBus, EventType, publish_safe
 from cressida.core.interfaces import Agent
 from cressida.core import AgentRole, MissionState, Task
 from cressida.core.model_tiers import ROLE_MODEL as _ROLE_MODEL, DEFAULT_MODEL as _DEFAULT_MODEL
-from cressida.core.paths import mission_dir, project_dir, resolve_under_home
+from cressida.core.paths import mission_dir, project_dir, resolve_mission_artifact_path, resolve_under_home
 from cressida.core.tools.definitions import get_tools_for_role, select_tools_for_task
 from cressida.core.tools.implementations import execute_tool, PhaseRejectedError, PhaseEscalatedError
 from cressida.orchestration.context_builder import ContextBuilder
@@ -113,6 +113,7 @@ class LLMAgent(Agent):
             brief=state.brief,
             reads=task.metadata.get("reads", []),
             task_description=task.description,
+            writes=task.metadata.get("writes", []),
             objectives=state.objectives if state.objectives else None,
             target_dir=project_dir(state),
             skills=task.metadata.get("skills"),
@@ -228,7 +229,7 @@ class LLMAgent(Agent):
             # Anchored to cressida_home(), not the CWD — see core/paths.py.
             # Absolute paths pass through, which is how a mission writes into an
             # external target project.
-            p = resolve_under_home(resolved)
+            p = resolve_mission_artifact_path(resolved, mission_id)
             if p.suffix:
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_text(content, encoding="utf-8")

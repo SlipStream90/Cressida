@@ -82,8 +82,8 @@ def test_gateway_provider_never_calls_detect_provider(monkeypatch):
     registry = AgentRegistry()
     create_all_agents(registry, provider="auto")
 
-    assert calls["detect_provider"] == 1
-    assert calls["detect_available"] == 0
+    assert calls["detect_provider"] == 0
+    assert calls["detect_available"] == 1
     assert registry.count == len(list(AgentRole))
 
 

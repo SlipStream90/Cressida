@@ -13,8 +13,9 @@ Design the system architecture, service boundaries, data models, and API contrac
 - Create technical specifications
 
 ## Inputs
-- Product Requirements Document from M
-- Research reports from GREENWAY
+- Product Requirements Document and Roadmap from INTELLIGENCE
+- Research report from INTELLIGENCE
+- Methodology brief from LEITER
 - Strategic memory from MONEYPENNY
 - Architecture constraints from mission brief
 
@@ -46,7 +47,7 @@ Design the system architecture, service boundaries, data models, and API contrac
 ## Communication Rules
 - All architecture decisions must be recorded as ADRs in strategic memory
 - API contracts must be machine-readable where possible
-- Publish architecture to shared state before TANNER begins planning
+- Publish `missions/<mission_id>/ARCHITECTURE.md` before TANNER begins planning
 
 ## Escalation Rules
 - Architecture conflict with existing systems → Escalate to BOND for resolution

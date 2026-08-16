@@ -20,8 +20,8 @@ def create_all_agents(
 
     provider: one of 'auto' | 'gateway' | 'anthropic' | 'openai' | 'gemini' | 'groq' | 'ollama' |
               'claude_cli' | 'opencode' | 'codex' | 'kilocode'
-              'auto' probes environment variables and installed packages in order, and every
-              role runs on the single provider it picks.
+              'auto' probes all available providers in priority order and wraps each role in a
+              runtime fallback chain, so an unavailable CLI does not abort the mission.
               'gateway' also probes availability, but picks a provider *per role* (via
               core/providers/gateway.py) instead of one fixed provider for the whole
               mission — see that module's docstring for the rationale.
@@ -39,6 +39,7 @@ def create_all_agents(
     # resolves once and applies to every role, exactly as before this option
     # existed.
     gateway_providers: list[str] | None = None
+    fallback_providers: list[str] | None = None
     resolved = provider
     if provider == "gateway":
         gateway_providers = detect_available_providers()
@@ -49,7 +50,16 @@ def create_all_agents(
                 "for how to make one available."
             )
     elif provider == "auto":
-        resolved = detect_provider()
+        # Keep every currently available provider in order. A binary being
+        # installed does not guarantee its session is authenticated, so the
+        # runtime wrapper also falls through when a provider fails mid-task.
+        fallback_providers = detect_available_providers()
+        if not fallback_providers:
+            # Preserve detect_provider's detailed diagnostic for the empty
+            # environment case.
+            resolved = detect_provider()
+        else:
+            resolved = fallback_providers[0]
 
     for role in AgentRole:
         if registry.is_registered(role):
@@ -57,18 +67,37 @@ def create_all_agents(
         role_provider = (
             _select_gateway_provider(role, gateway_providers) if gateway_providers is not None else resolved
         )
-        kwargs = dict(
-            role=role,
-            provider=role_provider,
-            agents_dir=agents_path,
-            cressida_root=root_path,
-            max_tokens=max_tokens,
-            ollama_model=ollama_model,
-            ollama_host=ollama_host,
-        )
-        if timeout > 0:
-            kwargs["timeout"] = timeout
-        agent = create_agent(**kwargs)
+        provider_list = fallback_providers if fallback_providers is not None else [role_provider]
+        candidates = []
+        candidate_names = []
+        for candidate_provider in provider_list:
+            kwargs = dict(
+                role=role,
+                provider=candidate_provider,
+                agents_dir=agents_path,
+                cressida_root=root_path,
+                max_tokens=max_tokens,
+                ollama_model=ollama_model,
+                ollama_host=ollama_host,
+            )
+            if timeout > 0:
+                kwargs["timeout"] = timeout
+            try:
+                candidates.append(create_agent(**kwargs))
+                candidate_names.append(candidate_provider)
+            except Exception as exc:
+                if fallback_providers is None:
+                    raise
+                print(f"[provider-fallback] skipping {candidate_provider}: {exc}")
+
+        if not candidates:
+            raise RuntimeError(f"No provider could be initialized for role {role.value}")
+
+        if fallback_providers is not None and len(candidates) > 1:
+            from cressida.core.providers.fallback import FallbackAgent
+            agent = FallbackAgent(role, candidates, candidate_names)
+        else:
+            agent = candidates[0]
         registry.register(agent)
 
 

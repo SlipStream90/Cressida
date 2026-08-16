@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -189,6 +190,7 @@ def _build_mission_state(
         },
     ))
     architecture_reads = [
+        f"missions/{mission_id}/intelligence/research_report.md",
         f"missions/{mission_id}/intelligence/PRD.md",
         f"missions/{mission_id}/intelligence/Roadmap.md",
     ]
@@ -228,7 +230,6 @@ def _build_mission_state(
             "trivial": trivial,
             "writes": [
                 f"missions/{mission_id}/ARCHITECTURE.md",
-                f"missions/{mission_id}/architecture/mcp_tool_requests.json",
             ],
         },
     ))
@@ -288,11 +289,16 @@ def _build_mission_state(
         metadata={
             "reads": [
                 f"missions/{mission_id}/intelligence/PRD.md",
+                f"missions/{mission_id}/intelligence/Roadmap.md",
                 f"missions/{mission_id}/ARCHITECTURE.md",
             ],
             "writes": [f"missions/{mission_id}/backlog.json"],
         },
     ))
+    if not trivial:
+        state.tasks["planning"].metadata["reads"].append(
+            f"missions/{mission_id}/intelligence/methodology_brief.md"
+        )
     implementation_reads = [
         f"missions/{mission_id}/intelligence/PRD.md",
         f"missions/{mission_id}/ARCHITECTURE.md",
@@ -333,10 +339,7 @@ def _build_mission_state(
     state.add_task(Task(
         id="review",
         name="Code review",
-        description=(
-            "Review the implemented code for quality, correctness, and adherence "
-            "to the architecture. Run tests if available. Provide a review report."
-        ),
+        description=_review_task_description(),
         agent=AgentRole.REVIEW,
         priority=default_priority,
         depends_on=["implementation"],
@@ -344,12 +347,49 @@ def _build_mission_state(
             "reads": [
                 f"missions/{mission_id}/implementation/",
                 f"missions/{mission_id}/intelligence/PRD.md",
+                f"missions/{mission_id}/intelligence/Roadmap.md",
                 f"missions/{mission_id}/ARCHITECTURE.md",
+                f"missions/{mission_id}/backlog.json",
             ],
             "writes": [f"missions/{mission_id}/review_report.md"],
+            "project_dir": str(target),
         },
     ))
+    if not trivial:
+        state.tasks["review"].metadata["reads"].insert(
+            1, f"missions/{mission_id}/intelligence/methodology_brief.md"
+        )
     return state
+
+
+def _review_task_description() -> str:
+    """Shared REVIEW task prompt for both a mission's first review and every
+    review-loop fix round (see ``_run_review_loop``) — the contract has to be
+    identical everywhere so ``_parse_review_verdict`` can read any of them.
+
+    The plain-English "provide a review report" instruction that used to be
+    here left REVIEW free to write whatever prose it wanted (observed: "Score:
+    7.5/10, Recommendation: Conditional" with a "Required before approval"
+    list in one report, different wording in another) — fine for a human to
+    read, useless for code to gate on reliably. This adds a structured
+    verdict line on top, the same way BOND's gate needed an explicit
+    ``Decision: <verdict>`` contract (see ``_parse_bond_decision_file``)
+    rather than relying on free text.
+    """
+    return (
+        "Review the implemented code for quality, correctness, and adherence to the "
+        "architecture. Run tests if available. Provide a review report at review_report.md.\n\n"
+        "End the report with a machine-parseable verdict line, formatted EXACTLY like one of "
+        "these (on its own line, no surrounding markdown emphasis):\n\n"
+        "RECOMMENDATION: APPROVED\n"
+        "RECOMMENDATION: NEEDS_FIXES\n\n"
+        "If NEEDS_FIXES, follow it with a `## Outstanding Items` section listing every concrete, "
+        "actionable fix required (compile errors, missing files, failing tests, security issues, "
+        "etc.) as a plain list — one item per line, specific enough that another engineer could "
+        "act on it without re-reading the whole review. Reserve NEEDS_FIXES for things that should "
+        "actually block approval; purely optional/nice-to-have suggestions don't count and "
+        "shouldn't force APPROVED into NEEDS_FIXES."
+    )
 
 
 def _persist_initial_state(state: MissionState) -> None:
@@ -425,6 +465,265 @@ def _rehydrate_from_execution_state(state: MissionState, mission_id: str) -> boo
     return resumed > 0
 
 
+def _parse_review_verdict(report_path: Path) -> tuple[str, str]:
+    """Parse a review_report.md written under the ``_review_task_description``
+    contract into ``(verdict, outstanding_items_text)``.
+
+    ``verdict`` is one of ``"APPROVED"``, ``"NEEDS_FIXES"``, or ``"UNKNOWN"``.
+    UNKNOWN (missing file, or no parseable verdict line at all) deliberately
+    does NOT trigger a fix round — looping on a report the parser can't read
+    would burn the fix budget on a formatting problem instead of a real one;
+    that case is left for a human to look at, same as BOND failing closed on
+    an unparseable decision file.
+    """
+    if not report_path.exists():
+        return "UNKNOWN", ""
+    text = report_path.read_text(encoding="utf-8")
+
+    m = re.search(
+        r"^\s*RECOMMENDATION\s*:\s*(APPROVED|NEEDS[_ -]?FIXES)\b",
+        text, re.IGNORECASE | re.MULTILINE,
+    )
+    if m:
+        verdict = "NEEDS_FIXES" if "NEED" in m.group(1).upper() else "APPROVED"
+    else:
+        # Fallback for reports written before this contract existed, or by a
+        # REVIEW run that ignored it — free-text "Recommendation: <word>"
+        # phrasing observed in the wild (e.g. "**Recommendation: Conditional**").
+        m2 = re.search(r"recommendation\s*:?\**\s*([A-Za-z][A-Za-z \-]{0,30})", text, re.IGNORECASE)
+        if not m2:
+            return "UNKNOWN", ""
+        word = m2.group(1).strip().lower()
+        if "approve" in word and "not" not in word:
+            verdict = "APPROVED"
+        elif any(k in word for k in ("condition", "reject", "block", "fail")):
+            verdict = "NEEDS_FIXES"
+        else:
+            return "UNKNOWN", ""
+
+    outstanding = ""
+    if verdict == "NEEDS_FIXES":
+        m3 = re.search(r"##\s*Outstanding Items\s*\n(.*?)(?:\n##\s|\Z)", text, re.IGNORECASE | re.DOTALL)
+        if m3:
+            outstanding = m3.group(1).strip()
+        else:
+            # Same fallback tier as above: older/off-contract reports used
+            # headings like "Required before approval" / "Missing Items".
+            chunks = []
+            for heading in (r"required before approval", r"missing items"):
+                m4 = re.search(rf"{heading}[^\n]*\n(.*?)(?:\n##\s|\n---|\Z)", text, re.IGNORECASE | re.DOTALL)
+                if m4:
+                    chunks.append(m4.group(1).strip())
+            outstanding = "\n\n".join(chunks).strip()
+    return verdict, outstanding
+
+
+def _render_fix_brief(outstanding: str, source_mission_id: str, round_num: int) -> str:
+    return (
+        f"# Fix round {round_num} — resolve outstanding code review items\n\n"
+        f"A code review of this project (missions/{source_mission_id}/review_report.md) found the "
+        "following items that must be fixed before the implementation can be approved. Fix all of "
+        "them in the existing codebase; do not rewrite working code the review didn't flag.\n\n"
+        f"## Outstanding items\n\n"
+        + (outstanding or (
+            "(the review flagged NEEDS_FIXES but did not enumerate items in the expected format — "
+            f"re-read the full report at missions/{source_mission_id}/review_report.md and fix "
+            "whatever is blocking approval.)"
+        ))
+    )
+
+
+def _build_review_fix_state(
+    mission_id: str, brief: str, target_dir: str | Path, root_mission_id: str, source_mission_id: str,
+) -> MissionState:
+    """Two-task DAG (``implementation`` -> ``review``) for one review-loop fix
+    round — deliberately skips research/product_definition/architecture/BOND,
+    since this is a targeted fix pass against an already-approved
+    architecture, not a new mission from scratch. PRD/ARCHITECTURE are still
+    read from the root mission for context.
+
+    Reuses the ``implementation``/``review`` task ids and the exact
+    ``_build_mission_state`` metadata shape (reads/writes/project_dir) so
+    every downstream piece (Dispatcher commissioning, TaskExecutor, the
+    claude_cli provider's prompt assembly) treats this exactly like any other
+    mission's implementation/review pair — nothing in that path keys off
+    mission shape or task count.
+    """
+    state = MissionState(mission_id=mission_id, brief=brief, status=MissionStatus.PENDING)
+    target = Path(target_dir).expanduser().resolve()
+    _check_project_dir_is_safe(target)
+    state.metadata["project_dir"] = str(target)
+    state.metadata["review_loop_root_mission"] = root_mission_id
+    state.metadata["review_loop_source_mission"] = source_mission_id
+
+    state.add_task(Task(
+        id="implementation",
+        name="Fix review findings",
+        description=(
+            f"A previous code review (missions/{source_mission_id}/review_report.md) found issues "
+            f"that must be fixed in the project at {target}. Read that review report plus the "
+            "project's PRD/architecture (linked below) for context, then fix every outstanding item "
+            "— this is a targeted fix pass, not a rewrite; don't touch code the review didn't flag. "
+            "Use the write_file tool to edit or create files as needed.\n\n" + brief
+        ),
+        agent=AgentRole.BRANCH,
+        priority=Priority.HIGH,
+        metadata={
+            "reads": [
+                f"missions/{root_mission_id}/intelligence/PRD.md",
+                f"missions/{root_mission_id}/ARCHITECTURE.md",
+                f"missions/{source_mission_id}/review_report.md",
+            ],
+            "writes": [f"missions/{mission_id}/implementation/"],
+            "project_dir": str(target),
+        },
+    ))
+    state.add_task(Task(
+        id="review",
+        name="Code review",
+        description=_review_task_description(),
+        agent=AgentRole.REVIEW,
+        priority=Priority.HIGH,
+        depends_on=["implementation"],
+        metadata={
+            "reads": [
+                f"missions/{mission_id}/implementation/",
+                f"missions/{root_mission_id}/intelligence/PRD.md",
+                f"missions/{root_mission_id}/ARCHITECTURE.md",
+            ],
+            "writes": [f"missions/{mission_id}/review_report.md"],
+        },
+    ))
+    return state
+
+
+def _record_review_loop_progress(root_mission_id: str, **fields: Any) -> None:
+    """Best-effort append to missions/<root>/review_loop.json so mission_status
+    /mission_progress readers (including the MCP tools) have somewhere to see
+    fix-round history without knowing the derived ``<root>_fixN`` mission ids
+    up front. Never raises — this is observability, not control flow."""
+    path = mission_dir(root_mission_id) / "review_loop.json"
+    try:
+        history = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"rounds": []}
+    except Exception:
+        history = {"rounds": []}
+    entry = {"at": datetime.now().isoformat(), **fields}
+    history["rounds"].append(entry)
+    history["last_updated"] = entry["at"]
+    try:
+        path.write_text(json.dumps(history, indent=2), encoding="utf-8")
+    except Exception as e:
+        print(f"[commands] review_loop.json write skipped: {e}")
+
+
+async def _run_review_loop(
+    result: MissionState,
+    root_mission_id: str,
+    registry: AgentRegistry,
+    memory: MemorySystem,
+    event_bus: EventBus,
+    target_dir: str | None,
+) -> MissionState:
+    """After a mission's REVIEW task runs, automatically loop fix -> re-review
+    until APPROVED or a round cap, instead of leaving a NEEDS_FIXES verdict
+    sitting in review_report.md for a human to notice and manually resume
+    (which is what every mission previously required — see the review task's
+    old free-text-only description, now ``_review_task_description``).
+
+    Opt out per-run with ``CRESSIDA_REVIEW_LOOP=0``. Round cap via
+    ``CRESSIDA_MAX_REVIEW_ROUNDS`` (default 3) — a mission still not approved
+    after that many targeted fix passes needs a human look, not more
+    automated rounds spending the same usage budget.
+
+    Each round is its own deterministic sub-mission (``<root>_fix1``,
+    ``_fix2``, …) built the exact same build-state -> rehydrate -> persist ->
+    coordinator.run_mission way as any other mission. That determinism is
+    what makes a crash mid-round (e.g. a provider session/rate limit — the
+    actual failure mode observed tonight) resumable for free: re-running
+    run_mission with the ROOT mission_id replays this loop from round 1,
+    re-derives the identical round mission_ids, and each round's own
+    execution_state.json rehydrate skips whatever it already finished.
+    """
+    if os.environ.get("CRESSIDA_REVIEW_LOOP", "1") == "0":
+        return result
+    if result.status != MissionStatus.COMPLETED:
+        return result
+    if not target_dir:
+        return result
+
+    max_rounds = int(os.environ.get("CRESSIDA_MAX_REVIEW_ROUNDS", "3"))
+    current_state = result
+    current_mission_id = root_mission_id
+    round_num = 0
+
+    while True:
+        review_task = current_state.tasks.get("review")
+        if review_task is None or review_task.status != TaskStatus.COMPLETED:
+            return current_state
+
+        report_path = mission_dir(current_mission_id) / "review_report.md"
+        verdict, outstanding = _parse_review_verdict(report_path)
+
+        if verdict == "UNKNOWN":
+            current_state.status = MissionStatus.FAILED
+            current_state.metadata["review_loop_blocked"] = (
+                f"No parseable review verdict in {report_path}; mission cannot be approved."
+            )
+            print(f"[commands] review loop: no parseable verdict in {report_path}, blocking mission")
+            return current_state
+        if verdict == "APPROVED":
+            if round_num:
+                print(f"[commands] review loop: {current_mission_id} approved after {round_num} fix round(s)")
+                _record_review_loop_progress(root_mission_id, round=round_num, mission_id=current_mission_id, verdict="APPROVED", final=True)
+            return current_state
+        if not outstanding.strip():
+            current_state.status = MissionStatus.FAILED
+            current_state.metadata["review_loop_blocked"] = (
+                "Review returned NEEDS_FIXES without parseable outstanding items."
+            )
+            print("[commands] review loop: NEEDS_FIXES without outstanding items, blocking mission")
+            return current_state
+        if round_num >= max_rounds:
+            current_state.status = MissionStatus.FAILED
+            current_state.metadata["review_loop_exhausted"] = True
+            current_state.metadata["review_loop_last_outstanding"] = outstanding
+            print(
+                f"[commands] review loop hit its {max_rounds}-round cap for {root_mission_id} without "
+                "approval — blocking the mission; outstanding items are in "
+                "metadata['review_loop_last_outstanding'] and review_loop.json for a human to finish."
+            )
+            _record_review_loop_progress(
+                root_mission_id, round=round_num, mission_id=current_mission_id,
+                verdict="NEEDS_FIXES", exhausted=True, outstanding_preview=outstanding[:1000],
+            )
+            return current_state
+
+        round_num += 1
+        fix_mission_id = f"{root_mission_id}_fix{round_num}"
+        fix_brief = _render_fix_brief(outstanding, current_mission_id, round_num)
+        fix_state = _build_review_fix_state(
+            fix_mission_id, fix_brief, target_dir,
+            root_mission_id=root_mission_id, source_mission_id=current_mission_id,
+        )
+        _rehydrate_from_execution_state(fix_state, fix_mission_id)
+        _persist_initial_state(fix_state)
+        _record_review_loop_progress(
+            root_mission_id, round=round_num, mission_id=fix_mission_id,
+            source_mission_id=current_mission_id, verdict="NEEDS_FIXES",
+            outstanding_preview=outstanding[:1000], status="started",
+        )
+
+        print(f"[commands] review round {round_num}: {fix_mission_id} fixing outstanding items from {current_mission_id}")
+        fix_coordinator = Coordinator(registry, event_bus, memory)
+        fix_shared = SharedState()
+        fix_shared.mission = type(fix_shared.mission)(mission_id=fix_mission_id, brief=fix_brief)
+        current_state = await fix_coordinator.run_mission(fix_state, fix_shared)
+        current_mission_id = fix_mission_id
+
+        if current_state.status != MissionStatus.COMPLETED:
+            return current_state
+
+
 async def run_mission(args: argparse.Namespace) -> int:
     brief_path = Path(args.brief)
     if brief_path.exists():
@@ -475,6 +774,11 @@ async def run_mission(args: argparse.Namespace) -> int:
     print(f"  mission dir:    {mission_dir(mission_id)}")
     print(f"  target project: {state.metadata.get('project_dir')}")
     result = await coordinator.run_mission(state, shared)
+
+    result = await _run_review_loop(
+        result, mission_id, registry, memory, event_bus,
+        target_dir=state.metadata.get("project_dir"),
+    )
 
     print(f"Mission {mission_id}: {result.status}")
     if result.status == MissionStatus.COMPLETED:

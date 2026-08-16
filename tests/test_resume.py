@@ -7,10 +7,15 @@ scheduler only re-runs what didn't finish."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 from cressida.cli.commands import _build_mission_state, _rehydrate_from_execution_state
-from cressida.core import TaskStatus
+from cressida.core import AgentRole, MissionStatus, TaskStatus
+from cressida.core.events import EventBus
+from cressida.core.registry import AgentRegistry
+from cressida.memory.system import MemorySystem
+from cressida.orchestration.coordinator import Coordinator
 
 
 def test_rehydrate_marks_only_previously_completed_tasks(tmp_path, monkeypatch):
@@ -67,3 +72,20 @@ def test_rehydrate_no_op_when_no_execution_state(tmp_path, monkeypatch):
     monkeypatch.setenv("CRESSIDA_MISSIONS_DIR", str(tmp_path))
     state = _build_mission_state("mission_never_run", "build a thing", target_dir=str(tmp_path))
     assert _rehydrate_from_execution_state(state, "mission_never_run") is False
+
+
+def test_resumed_completed_bond_must_have_durable_approval(tmp_path, monkeypatch):
+    monkeypatch.setenv("CRESSIDA_MISSIONS_DIR", str(tmp_path / "missions"))
+    mission_id = "mission_resume_bond_gate"
+    target = tmp_path / "target"
+    target.mkdir()
+    state = _build_mission_state(mission_id, "build a thing", target_dir=target)
+    for task_id in ("research", "methodology_research", "product_definition", "architecture", "bond_approve_plan"):
+        state.tasks[task_id].status = TaskStatus.COMPLETED
+
+    result = asyncio.run(
+        Coordinator(AgentRegistry(), EventBus(), MemorySystem()).run_mission(state)
+    )
+
+    assert result.status == MissionStatus.ESCALATED
+    assert "no approval" in result.metadata["bond_gate_blocked"].lower()

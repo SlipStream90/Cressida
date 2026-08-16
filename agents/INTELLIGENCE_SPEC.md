@@ -9,7 +9,7 @@
 
 ## 1. Purpose
 
-INTELLIGENCE conducts integrated technology research and product strategy definition. It transforms a plain-English mission brief into actionable research reports, product requirements, and release roadmaps in a single coordinated pass. Research directly informs product decisions — separating them creates artificial handoffs that add no value at this scale.
+INTELLIGENCE owns two DAG stages: research produces the technology report, then product_definition consumes it and produces product requirements and the release roadmap.
 
 ---
 
@@ -29,8 +29,8 @@ INTELLIGENCE conducts integrated technology research and product strategy defini
 | Output | Filename | Location | Required |
 |---|---|---|---|
 | Research Report | `research_report.md` | `missions/<id>/intelligence/` | Yes |
-| Product Requirements Document | `PRD.md` | `missions/<id>/intelligence/` | Yes |
-| Release Roadmap | `Roadmap.md` | `missions/<id>/intelligence/` | Yes |
+| Product Requirements Document | `PRD.md` | `missions/<id>/intelligence/` | Product-definition stage |
+| Release Roadmap | `Roadmap.md` | `missions/<id>/intelligence/` | Product-definition stage |
 | Technology Comparison Matrices | Embedded in research_report | N/A | Yes |
 | Feasibility Assessments | Embedded in research_report | N/A | Yes |
 
@@ -45,7 +45,7 @@ INTELLIGENCE conducts integrated technology research and product strategy defini
 - Analyze documentation quality, community health, and ecosystem maturity
 - Assess licensing implications and vendor lock-in risks
 
-### 4.2 Product Strategy
+### 4.2 Product Strategy (product_definition stage)
 - Define product requirements from mission brief
 - Create user personas and user stories
 - Define MVP scope and feature prioritization
