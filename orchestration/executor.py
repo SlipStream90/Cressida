@@ -13,6 +13,7 @@ from cressida.core.types import AgentRole, MissionState, Task, TaskStatus, Prior
 from cressida.orchestration.context_builder import ContextBuilder
 from cressida.orchestration.dependency_graph import DependencyGraph
 from cressida.orchestration.router import RoutingError, TaskRouter
+from cressida.core.providers.fallback import has_usable_output
 
 # Roles whose job is to persist files (not just return prose) — a mission
 # genuinely stalling on write access still returns a normal-looking text
@@ -262,6 +263,32 @@ class TaskExecutor:
         while True:
             try:
                 result = await agent.execute(state, task, event_bus=self._event_bus)
+
+                # Every declared artifact-producing task must leave a usable
+                # artifact. Previously only BRANCH had this guard, so an
+                # expired/auth-failed CLI could make research, architecture,
+                # or BOND appear COMPLETED with zero-byte files.
+                if (
+                    role != AgentRole.BRANCH
+                    and getattr(agent, "_PROVIDER_NAME", None)
+                    and task.metadata.get("writes")
+                    and not has_usable_output(
+                        state, task, result
+                    )
+                ):
+                    task.status = TaskStatus.FAILED
+                    task.completed_at = datetime.now()
+                    task.output = result
+                    task.error = (
+                        f"{role.value} returned without producing usable declared outputs "
+                        f"for task {task.id}; refusing to mark the task completed."
+                    )
+                    await self._event_bus.publish(Event(
+                        type=EventType.TASK_FAILED,
+                        data={"task_id": task.id, "mission_id": state.mission_id, "error": task.error},
+                        source="executor",
+                    ))
+                    return
 
                 if role in _VERIFY_FILES_WRITTEN_ROLES and not _wrote_files_since(
                     state.mission_id, task.started_at, project_dir(state)

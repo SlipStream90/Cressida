@@ -40,7 +40,12 @@ framework instead of implementing them directly in this session.
 1. Call `mcp__cressida__run_mission` with `brief` (plain text or a path to a
    markdown PRD) and `project_dir` (the target codebase's absolute path —
    required whenever the mission should act on an existing project, not
-   just the brief text).
+   just the brief text). Always identify the invoking CLI in `invoker`:
+   `claude_cli` for Claude Code, `opencode` for OpenCode, `kilocode` for
+   Kilo Code, and `codex` for Codex. The MCP server uses that identity to
+   select the matching provider. Use `provider="auto"` only when the caller
+   is unknown; auto then tries the available providers in order and falls
+   through when a CLI is unauthenticated, rate-limited, or otherwise fails.
 2. Call `mcp__cressida__mission_status` or `mcp__cressida__mission_progress`
    with the returned `mission_id` to check on it — missions run in the
    background.

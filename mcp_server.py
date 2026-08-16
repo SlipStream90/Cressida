@@ -54,8 +54,29 @@ mcp = FastMCP(
         "Use mission_status to check progress. "
         "Use read_mission_file to inspect outputs. "
         "Use resolve_escalation when BOND requests a human decision."
+        " When starting a mission, pass the calling CLI identity as invoker "
+        "(claude_cli, opencode, kilocode, or codex); use provider=auto only "
+        "when the caller is unknown."
     ),
 )
+
+
+def _provider_for_invoker(provider: str, invoker: str) -> str:
+    """Bind an auto mission to the CLI that invoked the MCP server.
+
+    MCP does not standardize a caller identity, so supported auto-invoke skills
+    pass it explicitly. An explicit provider always wins; unknown invokers keep
+    the resilient automatic fallback chain.
+    """
+    if provider.strip().lower() != "auto":
+        return provider
+    aliases = {
+        "claude": "claude_cli", "claude-code": "claude_cli", "claude_cli": "claude_cli",
+        "opencode": "opencode", "open-code": "opencode",
+        "kilo": "kilocode", "kilocode": "kilocode", "kilo-code": "kilocode",
+        "codex": "codex", "codex-cli": "codex",
+    }
+    return aliases.get(invoker.strip().lower(), "auto")
 
 # ── Status monitoring (starts once on first use) ─────────────────────────────
 _monitor_started = False
@@ -225,6 +246,7 @@ def _spawn_mission_background(
 async def run_mission(
     brief: str,
     provider: str = "auto",
+    invoker: str = "",
     ollama_model: str = "llama3.2",
     priority: str = "medium",
     project_dir: str = "",
@@ -249,7 +271,11 @@ async def run_mission(
     Args:
         brief:        What you want built. Can be a plain-English description
                       or a path to a markdown file containing a PRD.
-        provider:     auto | opencode | claude_cli | codex | anthropic | openai | gemini | groq | ollama | kilocode | gateway
+        provider:     auto | opencode | claude_cli | codex | anthropic | openai | gemini | groq | ollama | kilocode | gateway.
+                      `auto` keeps a provider fallback chain; an explicit value pins the mission.
+        invoker:      The CLI invoking this MCP server: claude_cli, opencode,
+                      kilocode, or codex. When provider=auto, this identity
+                      selects that provider for the mission.
         ollama_model: Only used when provider=ollama. Default: llama3.2
         priority:     low | medium | high.
         project_dir:  Absolute path to the project the mission should act on —
@@ -276,6 +302,7 @@ async def run_mission(
 
     _ensure_monitor_started()
 
+    provider = _provider_for_invoker(provider, invoker)
     resuming = bool(mission_id)
     if not mission_id:
         # Microsecond suffix avoids collisions between missions started in
@@ -345,6 +372,7 @@ async def run_mission(
     return (
         window_note +
         f"Mission started: {mission_id}\n"
+        f"Provider: {provider}\n"
         f"Output: {out_dir}\n\n"
         f"The mission is running in the background. "
         f"Call mission_status(mission_id=\"{mission_id}\") to check progress, or run "

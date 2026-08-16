@@ -2,7 +2,8 @@ from __future__ import annotations
 
 """Provider auto-detection and agent class resolution.
 
-Priority order (first match wins):
+Priority order (first match wins for a single-provider lookup; automatic
+missions retain the full available list as a fallback chain):
   1. CRESSIDA_PROVIDER env var (explicit override — always respected)
   2. ANTHROPIC_API_KEY + anthropic package installed
   3. OPENAI_API_KEY   + openai   package installed
