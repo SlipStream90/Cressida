@@ -13,9 +13,17 @@ def test_stage_handoffs_include_required_upstream_artifacts(tmp_path):
 
     reads = {task_id: set(task.metadata.get("reads", [])) for task_id, task in state.tasks.items()}
     assert "missions/mission_stage_contracts/intelligence/research_report.md" in reads["architecture"]
-    assert "missions/mission_stage_contracts/intelligence/methodology_brief.md" in reads["planning"]
-    assert "missions/mission_stage_contracts/intelligence/Roadmap.md" in reads["planning"]
     assert "missions/mission_stage_contracts/backlog.json" in reads["review"]
+
+    # TANNER turns Q's build sheet into a task list, so it reads the sheet and
+    # the PRD — not the Roadmap, ARCHITECTURE.md and methodology brief it used
+    # to get. Everything it needs from those is carried into BUILD_SPEC.md, and
+    # the wider context had it spending 15 minutes planning five tasks for a
+    # three-file service.
+    assert reads["planning"] == {
+        "missions/mission_stage_contracts/architecture/BUILD_SPEC.md",
+        "missions/mission_stage_contracts/intelligence/PRD.md",
+    }
 
     architecture_writes = state.tasks["architecture"].metadata["writes"]
     assert architecture_writes == [

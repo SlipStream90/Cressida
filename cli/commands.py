@@ -290,26 +290,35 @@ def _build_mission_state(
             "trivial": trivial,
         },
     ))
+    # TANNER's job is turning Q's build sheet into an ordered task list, so it
+    # gets the build sheet and the PRD — the same narrowing BRANCH got, for the
+    # same reason. It used to receive Roadmap.md, ARCHITECTURE.md and the
+    # methodology brief too and spent 15 minutes planning five tasks for a
+    # three-file service. Everything downstream needs from those documents is
+    # already carried forward into BUILD_SPEC.md.
     state.add_task(Task(
         id="planning",
         name="Task planning",
-        description="Decompose tasks, create dependency graph, and populate execution backlog",
+        description=(
+            "Turn BUILD_SPEC.md into an ordered execution backlog: one task per file or "
+            "verification step, each with an id, a one-line description, and its dependencies. "
+            "The build spec and PRD are already included below — do not go reading the rest of "
+            "the mission directory for more context, and do not redesign anything the spec has "
+            "already decided. Carry the spec's constraints (pinned versions, security floors) "
+            "into the tasks that must honour them. "
+            f"Write the backlog as JSON to missions/{mission_id}/backlog.json."
+        ),
         agent=AgentRole.TANNER,
         priority=default_priority,
         depends_on=["bond_approve_plan"],
         metadata={
             "reads": [
+                f"missions/{mission_id}/architecture/BUILD_SPEC.md",
                 f"missions/{mission_id}/intelligence/PRD.md",
-                f"missions/{mission_id}/intelligence/Roadmap.md",
-                f"missions/{mission_id}/ARCHITECTURE.md",
             ],
             "writes": [f"missions/{mission_id}/backlog.json"],
         },
     ))
-    if not trivial:
-        state.tasks["planning"].metadata["reads"].append(
-            f"missions/{mission_id}/intelligence/methodology_brief.md"
-        )
     # BRANCH's inputs are deliberately narrow: the build sheet Q wrote for it,
     # the task list, and the PRD for intent. It used to receive ARCHITECTURE.md
     # and the methodology brief as well, and then went looking for the rest of
