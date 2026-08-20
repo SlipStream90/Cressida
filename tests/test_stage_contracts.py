@@ -45,6 +45,22 @@ def test_stage_handoffs_include_required_upstream_artifacts(tmp_path):
     }
 
 
+def test_review_audits_the_build_sheet_branch_implemented_from(tmp_path):
+    """REVIEW used to read ARCHITECTURE.md but not BUILD_SPEC.md, while BRANCH
+    reads only BUILD_SPEC.md — so "architecture compliance" was scored against
+    a document the implementer never opened. Both must be present."""
+    state = _build_mission_state(
+        "mission_review_reads", "build a web application", target_dir=str(tmp_path)
+    )
+    review_reads = set(state.tasks["review"].metadata["reads"])
+    implementation_reads = set(state.tasks["implementation"].metadata["reads"])
+
+    spec = "missions/mission_review_reads/architecture/BUILD_SPEC.md"
+    assert spec in implementation_reads
+    assert spec in review_reads, "REVIEW cannot judge compliance against a spec it never reads"
+    assert "missions/mission_review_reads/ARCHITECTURE.md" in review_reads
+
+
 def test_trivial_stage_does_not_require_skipped_methodology_artifact(tmp_path):
     state = _build_mission_state(
         "mission_stage_contracts_trivial", "build a small utility", target_dir=str(tmp_path), trivial=True

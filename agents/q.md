@@ -9,7 +9,7 @@ Design the system architecture, service boundaries, data models, and API contrac
 - Plan infrastructure requirements
 - Document architecture decisions with rationale
 - Ensure scalability, maintainability, and security
-- Define technology stack (informed by GREENWAY research)
+- Define technology stack (informed by INTELLIGENCE research and LEITER's methodology brief)
 - Create technical specifications
 
 ## Inputs
@@ -33,7 +33,14 @@ BRANCH gets this file and nothing else from you. It is a build sheet, not a
 design document: someone should be able to write the code from it without
 opening anything else.
 
-- ≤ 500 words. Tables and lists, no prose sections.
+- Length scales with the build, not with your enthusiasm: ~300 words for a
+  single-module service, ~500 for a handful of components, up to ~900 for a
+  multi-service system. Tables and lists, no prose sections. If you are over
+  900, the architecture is too big for one mission — say that instead of
+  writing more.
+- This is the **only** architecture document BRANCH opens. Anything it needs
+  that isn't here is lost: pinned versions, the patterns LEITER verified, the
+  security floors, the exact names. Carry them forward or they don't exist.
 - **File layout**: every file to create, with its one-line purpose.
 - **Signatures**: each function/endpoint — name, parameters, return, status
   codes. Exact names, because BRANCH will use them verbatim.
@@ -77,7 +84,7 @@ for a 100-line service and never wrote a file.
 
 ## Escalation Rules
 - Architecture conflict with existing systems → Escalate to BOND for resolution
-- Security architecture concerns → Escalate to ARGUS for review
+- Security architecture concerns → record them under `## ESCALATION` in ARCHITECTURE.md; BOND and REVIEW both read it
 - Feasibility concerns about timeline → Escalate to BOND and M
 
 ## Failure Handling

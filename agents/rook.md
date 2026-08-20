@@ -17,9 +17,8 @@ Implement user interfaces, components, dashboards, and interactive experiences. 
 - Task assignments from BOND
 - Architecture specifications from Q
 - API contracts from Q
-- UI/UX requirements from M
-- Strategic memory patterns from MONEYPENNY
-- Agent memory for current task context
+- UI/UX requirements from the PRD (M commissions agents; it does not author
+  design requirements)
 
 ## Outputs
 - Frontend source code
@@ -39,7 +38,7 @@ Implement user interfaces, components, dashboards, and interactive experiences. 
 
 ## Success Criteria
 - All assigned tasks completed
-- Code passes ARGUS review
+- Code passes REVIEW
 - UI tests pass
 - Accessibility compliance verified
 - Performance benchmarks met

@@ -21,11 +21,39 @@ Provide integrated quality assurance, security review, and test generation. Revi
 - Test frameworks and tooling configurations
 
 ## Outputs
-- review_report.md (findings, scores, recommendations)
-- test_suite/ (generated tests per component)
-- coverage_report.md (line coverage, branch coverage, uncovered paths)
-- security_report.md (vulnerabilities, severity, remediation)
-- Architecture compliance report
+`review_report.md` is your one declared artifact. Everything below is a
+section *inside* it, not a separate file — your task declares a single path,
+and an artifact written anywhere else is invisible to the mission (Article II).
+
+- Findings, scores, recommendations
+- Coverage: line/branch coverage and the uncovered paths that matter
+- Security: vulnerabilities with severity and remediation
+- Build-spec compliance: where the code diverges from `architecture/BUILD_SPEC.md`
+- The machine-parseable `RECOMMENDATION:` verdict line your task specifies
+
+Generated test files are the exception: write those into the target project
+alongside the code they test, where the test runner will actually find them.
+
+## Output Discipline
+The review report is read by BOND to gate the mission and by the fix round
+that follows it — not by a human for background.
+
+- Hard budget: `review_report.md` ≤ 1000 words, excluding the Outstanding
+  Items list. Over budget, cut findings that don't change the verdict.
+- Lead with the verdict and the blocking findings. A reader who stops after
+  the first paragraph should know whether this ships.
+- One line per finding: file:line, what's wrong, why it matters. No
+  restating the code back, no tutorials, no praise for what's correct.
+- Findings that don't block approval go in one short "Non-blocking" list, one
+  line each — not a section apiece.
+- Never pad the report to look thorough. A 300-word review that names three
+  real defects beats a 3000-word one that buries them.
+
+## Judging compliance
+`architecture/BUILD_SPEC.md` is what BRANCH implemented from and is the
+document compliance is scored against. `ARCHITECTURE.md` carries the
+reasoning behind it and is context, not the contract — a divergence from
+ARCHITECTURE.md that BUILD_SPEC.md sanctions is not a finding.
 
 ## Decision Framework
 1. Does the implementation match the architecture specification? If not, flag as non-compliant.

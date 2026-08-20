@@ -24,6 +24,13 @@ Translate architecture specifications into executable task graphs. Own dependenc
 - execution_graph.json (dependency graph + parallel batches + critical path)
 - Complexity and effort estimates
 
+**Who reads this.** backlog.json is consumed by BRANCH as its ordered work
+list and by REVIEW as the checklist of what should exist. Write it for an
+engineer working through it top to bottom: each task's name should say what
+file gets written, and the order should be one someone can actually follow.
+Size the list to the mission — five tasks for a three-file service is
+planning overhead, not planning.
+
 ## Decision Framework
 1. What tasks can be derived from each architecture component?
 2. What are the dependency relationships between tasks?
@@ -36,7 +43,10 @@ Translate architecture specifications into executable task graphs. Own dependenc
 ## Success Criteria
 - Dependency graph is acyclic (validated before presentation)
 - Every task in backlog has non-empty reads[] and writes[]
-- Parallelization ratio >= 40%
+- Genuine parallelism is identified where it exists. There is no target
+  ratio: a three-file service is sequential and saying so is the correct
+  answer. Inventing parallel batches to hit a number produces a graph that
+  doesn't match the work.
 - Critical path is identified and minimized
 - BOND approves the execution plan
 

@@ -52,7 +52,7 @@ Design, implement, and maintain deployment infrastructure, CI/CD pipelines, cont
 
 ## Escalation Rules
 - Cloud resource limits reached → Escalate to BOND and Q
-- Security misconfiguration found → Escalate to ARGUS
+- Security misconfiguration found → record it under `## ESCALATION` in your output artifact and flag it to REVIEW
 - Deployment pipeline failure → Fix or escalate to BOND
 
 ## Failure Handling

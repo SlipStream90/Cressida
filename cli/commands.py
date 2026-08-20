@@ -377,6 +377,12 @@ def _build_mission_state(
                 f"missions/{mission_id}/intelligence/PRD.md",
                 f"missions/{mission_id}/intelligence/Roadmap.md",
                 f"missions/{mission_id}/ARCHITECTURE.md",
+                # BRANCH implements from BUILD_SPEC.md and never opens
+                # ARCHITECTURE.md (see implementation_reads above). Scoring
+                # "architecture compliance" against the reasoning document
+                # alone meant REVIEW was auditing against a spec the
+                # implementer had never seen.
+                f"missions/{mission_id}/architecture/BUILD_SPEC.md",
                 f"missions/{mission_id}/backlog.json",
             ],
             "writes": [f"missions/{mission_id}/review_report.md"],
@@ -405,8 +411,10 @@ def _review_task_description() -> str:
     rather than relying on free text.
     """
     return (
-        "Review the implemented code for quality, correctness, and adherence to the "
-        "architecture. Run tests if available. Provide a review report at review_report.md.\n\n"
+        "Review the implemented code for quality, correctness, and adherence to the build "
+        "spec. architecture/BUILD_SPEC.md is the specification BRANCH implemented from and is "
+        "what compliance is judged against; ARCHITECTURE.md carries the reasoning behind it. "
+        "Run tests if available. Provide a review report at review_report.md.\n\n"
         "End the report with a machine-parseable verdict line, formatted EXACTLY like one of "
         "these (on its own line, no surrounding markdown emphasis):\n\n"
         "RECOMMENDATION: APPROVED\n"
